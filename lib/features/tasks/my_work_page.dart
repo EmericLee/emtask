@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
-import 'package:printing/printing.dart';
 
 import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
@@ -196,39 +195,6 @@ class MyWorkPage extends ConsumerWidget {
       }
     }
 
-    // 通过系统打印对话框打印（可选，包含"另存为 PDF"）。
-    Future<void> onPrint() async {
-      final data = await preparePdfData();
-      if (data == null || !context.mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('正在生成 PDF...'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-
-      try {
-        final bytes = await buildTaskListPdf(
-          groups: data.groups,
-          calendarColors: data.calendarColors,
-          orphanMode: data.orphanMode,
-          allTasks: data.allTasks,
-        );
-        await Printing.layoutPdf(
-          onLayout: (format) async => bytes,
-          name:
-              '当前任务清单_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}',
-        );
-      } catch (e) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('生成 PDF 失败：$e')),
-          );
-        }
-      }
-    }
-
     return Scaffold(
       appBar: AppBar(
         title: const Row(
@@ -267,16 +233,11 @@ class MyWorkPage extends ConsumerWidget {
             ),
             onPressed: () => ref.read(_debugSortOrderProvider.notifier).state = !debugSort,
           ),
-          // 打印 / 导出 PDF
+          // 导出 PDF
           IconButton(
             tooltip: '导出 PDF 文件',
             icon: const Icon(Icons.download_outlined),
             onPressed: onExportPdf,
-          ),
-          IconButton(
-            tooltip: '打印（含另存为 PDF）',
-            icon: const Icon(Icons.print_outlined),
-            onPressed: onPrint,
           ),
         ],
       ),
