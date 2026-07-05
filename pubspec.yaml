@@ -1,10 +1,13 @@
 name: em_task
 description: "EM Task - 跨平台任务管理器，支持 CalDAV / Nextcloud Tasks 同步。"
 publish_to: 'none'
-version: 0.0.1+1
+version: 0.0.2+2
 
 environment:
-  sdk: ^3.11.0
+  # sdk: ^3.11.0
+  # sdk: '>=3.8.0 <4.0.0'  # Dart 版本约束
+  sdk: ^3.8.0
+  flutter: '3.32.5'     # Flutter 版本约束（可选） 兼容 Debian10 libstdc++ 8 for UOS 兼容
 
 dependencies:
   flutter:

@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # 允许手动触发
 
 env:
-  FLUTTER_VERSION: '3.32.5'
+  FLUTTER_VERSION: '3.32.5'  #兼容 Debian10 libstdc++ 8 版本，与 UOS 兼容
   APP_NAME: 'EM Task'
   APP_ID: com.emtask.em_task
   BINARY_NAME: em_task

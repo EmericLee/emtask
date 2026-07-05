@@ -72,3 +72,6 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# FVM Version Cache
+.fvm/

@@ -456,7 +456,7 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
         ),
         const SizedBox(height: 16),
         DropdownButtonFormField<String?>(
-          initialValue: _calendarUrl,
+          value: _calendarUrl,
           decoration: const InputDecoration(
             labelText: '日历',
             border: OutlineInputBorder(),
