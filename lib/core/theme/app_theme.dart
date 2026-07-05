@@ -54,6 +54,8 @@ class AppTheme {
       useMaterial3: true,
       colorScheme: scheme,
       visualDensity: VisualDensity.adaptivePlatformDensity,
+      // 全局指定中文字体，保证 UOS 等缺少中文字体的 Linux 系统正常显示
+      fontFamily: 'NotoSansSC',
       appBarTheme: AppBarTheme(
         centerTitle: false,
         backgroundColor: scheme.surface,

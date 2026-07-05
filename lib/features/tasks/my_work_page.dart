@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -9,7 +10,6 @@ import 'package:intl/intl.dart';
 import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
-import 'task_detail_dialog.dart';
 import 'task_list_pdf.dart';
 import 'task_providers.dart';
 
@@ -581,6 +581,10 @@ class _CurrentTaskList extends ConsumerStatefulWidget {
 
 class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   final Set<String> _expanded = {};
+  final ScrollController _scrollCtrl = ScrollController();
+
+  /// 鼠标滚轮加速倍率（桌面端默认滚动太慢）。
+  static const double _scrollSpeedup = 3.0;
 
   @override
   void initState() {
@@ -617,15 +621,41 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   }
 
   @override
+  void dispose() {
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final entries = widget.groups.entries.toList();
 
-    return ListView.builder(
-      padding: const EdgeInsets.only(bottom: 24),
-      itemCount: entries.length,
-      itemBuilder: (context, index) {
+    // 用 Listener 拦截鼠标滚轮事件并加速滚动。
+    return Listener(
+      onPointerSignal: (signal) {
+        if (signal is PointerScrollEvent && _scrollCtrl.hasClients) {
+          // 注册到 PointerSignalResolver，阻止 Scrollable 默认处理
+          GestureBinding.instance.pointerSignalResolver.register(
+            signal,
+            (event) {
+              if (event is PointerScrollEvent && _scrollCtrl.hasClients) {
+                final pos = _scrollCtrl.position;
+                final newOffset = (pos.pixels +
+                        event.scrollDelta.dy * _scrollSpeedup)
+                    .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+                pos.jumpTo(newOffset);
+              }
+            },
+          );
+        }
+      },
+      child: ListView.builder(
+        controller: _scrollCtrl,
+        padding: const EdgeInsets.only(bottom: 24),
+        itemCount: entries.length,
+        itemBuilder: (context, index) {
         final category = entries[index].key;
         final tasks = entries[index].value;
         final firstUrl = tasks.firstOrNull?.calendarUrl;
@@ -673,6 +703,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
           ],
         );
       },
+      ),
     );
   }
 
@@ -994,12 +1025,9 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
     ref.read(_starredUidsProvider.notifier).state = next;
   }
 
-  /// 弹出任务详情弹窗。
+  /// 跳转到任务详情页。
   void _showDetail(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) => TaskDetailDialog(task: widget.task),
-    );
+    context.push('/tasks/${widget.task.localId}');
   }
 
   /// 显示更多操作菜单。
