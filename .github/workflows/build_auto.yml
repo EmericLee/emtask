@@ -75,11 +75,20 @@ jobs:
           flutter precache --linux
           flutter doctor -v
           flutter pub get
-
+      
       # 6. 构建 Linux ARM64 Release
       - name: Build Linux Release
         run: |
-          flutter build linux --release --target-platform=linux-arm64
+          flutter build linux --release --target-platform=linux-arm64 --verbose 2>&1 | tee build.log
+          echo "=== 构建日志末尾 ==="
+          tail -100 build.log
+
+      - name: Debug with tmate
+        if: failure()  # 只在失败时触发，或总是触发
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true  # 只有触发工作流的人可以访问
+          timeout-minutes: 30          # 30 分钟后自动超时
 
       # 7. 准备 AppImage 工具
       - name: Setup AppImage Tools
