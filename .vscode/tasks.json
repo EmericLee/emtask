@@ -1,0 +1,48 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Release: Patch (0.1.0 → 0.1.1)",
+      "type": "shell",
+      "command": "dart run release.dart patch",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Release: Minor (0.1.0 → 0.2.0)",
+      "type": "shell",
+      "command": "dart run release.dart minor",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Release: Major (0.1.0 → 1.0.0)",
+      "type": "shell",
+      "command": "dart run release.dart major",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Release: Build Only (0.1.0+1 → 0.1.0+2)",
+      "type": "shell",
+      "command": "dart run release.dart build",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Flutter: Build Runner (生成代码)",
+      "type": "shell",
+      "command": "dart run build_runner build --delete-conflicting-outputs",
+      "group": "build",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Flutter: Analyze (静态分析)",
+      "type": "shell",
+      "command": "flutter analyze",
+      "group": "build",
+      "problemMatcher": ["$dart-analyze"],
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true }
+    }
+  ]
+}
