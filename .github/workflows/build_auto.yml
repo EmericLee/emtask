@@ -46,6 +46,16 @@ jobs:
             libgtk-3-dev liblzma-dev libstdc++-8-dev \
             build-essential libglu1-mesa-dev file wget fuse \
             libsqlite3-dev
+          # Debian 10 自带 cmake 3.13.4，但部分 Flutter 插件要求 3.14+
+          # 安装官方预编译的 CMake 3.28.3 (ARM64) 覆盖系统版本
+          CMAKE_VERSION=3.28.3
+          wget -q https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz -O /tmp/cmake.tar.gz
+          tar -xzf /tmp/cmake.tar.gz -C /opt/
+          rm /tmp/cmake.tar.gz
+          ln -sf /opt/cmake-${CMAKE_VERSION}-linux-aarch64/bin/cmake /usr/local/bin/cmake
+          ln -sf /opt/cmake-${CMAKE_VERSION}-linux-aarch64/bin/cpack /usr/local/bin/cpack
+          ln -sf /opt/cmake-${CMAKE_VERSION}-linux-aarch64/bin/ctest /usr/local/bin/ctest
+          cmake --version
 
       # 3. 检出代码
       - name: Checkout code
