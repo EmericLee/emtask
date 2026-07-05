@@ -1,0 +1,321 @@
+name: "Build AUTO"
+
+on:
+  push:
+    tags:
+      - "v*.*.*" # 当推送 v 开头的语义化版本标签时触发 CI/CD
+  workflow_dispatch: # 允许手动触发
+
+env:
+  FLUTTER_VERSION: '3.32.5'
+  APP_NAME: 'EM Task'
+  APP_ID: com.emtask.em_task
+  BINARY_NAME: em_task
+  RELEASE_NAME: "Release ${{ github.ref_name }}"
+
+jobs:
+  # ============================================================
+  # UOS (统信 UOS) ARM64 构建 —— 使用 Debian 10 容器保证 GLIBC 2.28 兼容
+  # ============================================================
+  build-uos:
+    name: "Build UOS (ARM64)"
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    container:
+      image: arm64v8/debian:buster
+      options: --user root
+    steps:
+      # 1. 修复 Debian 10 EOL 源列表
+      - name: Fix Debian 10 Sources (EOL)
+        run: |
+          rm -rf /etc/apt/sources.list.d/*
+          rm -f /etc/apt/sources.list
+          echo "deb http://archive.debian.org/debian/ buster main contrib non-free" > /etc/apt/sources.list
+          echo "deb http://archive.debian.org/debian-security/ buster/updates main" >> /etc/apt/sources.list
+          echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+          apt-get update
+          apt-get -y dist-upgrade
+
+      # 2. 安装构建依赖
+      - name: Install System Dependencies
+        run: |
+          apt-get update
+          apt-get install -y \
+            git curl unzip clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-8-dev \
+            build-essential libglu1-mesa-dev file wget fuse \
+            libsqlite3-dev
+
+      # 3. 检出代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 4. 手动安装 Flutter SDK（ARM 容器内 subosito/flutter-action 兼容性差）
+      - name: Setup Flutter SDK via Git
+        run: |
+          git clone https://github.com/flutter/flutter.git --depth 1 -b ${{ env.FLUTTER_VERSION }} _flutter
+          echo "$GITHUB_WORKSPACE/_flutter/bin" >> $GITHUB_PATH
+          git config --global --add safe.directory $GITHUB_WORKSPACE/_flutter
+
+      # 5. Flutter 依赖
+      - name: Flutter Doctor & Pub Get
+        run: |
+          flutter config --no-analytics
+          flutter precache --linux
+          flutter doctor -v
+          flutter pub get
+
+      # 6. 构建 Linux ARM64 Release
+      - name: Build Linux Release
+        run: |
+          flutter build linux --release --target-platform=linux-arm64
+
+      # 7. 准备 AppImage 工具
+      - name: Setup AppImage Tools
+        run: |
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+          chmod +x linuxdeploy-aarch64.AppImage
+          ./linuxdeploy-aarch64.AppImage --appimage-extract
+          rm linuxdeploy-aarch64.AppImage
+          mv squashfs-root linuxdeploy-root
+
+      # 8. 打包 AppImage
+      - name: Package AppImage
+        run: |
+          BUILD_DIR=build/linux/arm64/release/bundle
+          APP_DIR=AppDir
+
+          mkdir -p $APP_DIR/usr/bin
+          mkdir -p $APP_DIR/usr/lib
+          mkdir -p $APP_DIR/usr/share/applications
+          mkdir -p $APP_DIR/usr/share/icons/hicolor/256x256/apps
+
+          cp -r $BUILD_DIR/* $APP_DIR/usr/bin/
+
+          BINARY_NAME=$(find $APP_DIR/usr/bin -maxdepth 1 -type f -executable ! -name "*.so" -printf "%f" | head -n 1)
+          echo "Detected Binary Name: $BINARY_NAME"
+
+          cat > $APP_DIR/usr/share/applications/${{ env.APP_ID }}.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${{ env.APP_NAME }}
+          Exec=$BINARY_NAME
+          Icon=${{ env.APP_ID }}
+          Categories=Office;Utility;
+          EOF
+
+          # 如果存在图标则复制，否则跳过（linuxdeploy 会使用默认图标）
+          if [ -f assets/icon.png ]; then
+            cp assets/icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          elif [ -f assets/icon512.png ]; then
+            cp assets/icon512.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          fi
+
+          export ARCH=arm64
+          export LINUXDEPLOY="./linuxdeploy-root/AppRun"
+
+          $LINUXDEPLOY --appdir $APP_DIR \
+            --executable $APP_DIR/usr/bin/$BINARY_NAME \
+            --desktop-file $APP_DIR/usr/share/applications/${{ env.APP_ID }}.desktop \
+            --output appimage
+
+          # 重命名产物
+          mv *.AppImage ${{ env.BINARY_NAME }}-uos-arm64.AppImage || true
+
+      # 9. 上传产物
+      - name: Upload Artifact
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: em-task-uos-arm64
+          path: "*.AppImage"
+
+      - name: Upload Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
+          generate_release_notes: true
+          files: "*.AppImage"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # Linux x86_64 构建
+  # ============================================================
+  build-linux-x86:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2.13.0
+        with:
+          flutter-version: "${{ env.FLUTTER_VERSION }}"
+          cache: false
+
+      - name: 安装 Linux 依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-10-dev \
+            build-essential libglu1-mesa-dev file wget fuse \
+            libsqlite3-dev
+
+      - name: 获取 Flutter 依赖
+        run: |
+          flutter pub get
+          flutter clean
+
+      - name: 构建 Linux x86_64
+        run: |
+          flutter build linux --release
+
+      - name: 打包 Linux AppImage
+        run: |
+          BUILD_DIR=build/linux/x64/release/bundle
+          APP_DIR=AppDir
+
+          mkdir -p $APP_DIR/usr/bin
+          mkdir -p $APP_DIR/usr/lib
+          mkdir -p $APP_DIR/usr/share/applications
+          mkdir -p $APP_DIR/usr/share/icons/hicolor/256x256/apps
+
+          cp -r $BUILD_DIR/* $APP_DIR/usr/bin/
+
+          BINARY_NAME=$(find $APP_DIR/usr/bin -maxdepth 1 -type f -executable ! -name "*.so" -printf "%f" | head -n 1)
+          echo "Detected Binary Name: $BINARY_NAME"
+
+          cat > $APP_DIR/usr/share/applications/${{ env.APP_ID }}.desktop <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=${{ env.APP_NAME }}
+          Exec=$BINARY_NAME
+          Icon=${{ env.APP_ID }}
+          Categories=Office;Utility;
+          EOF
+
+          if [ -f assets/icon.png ]; then
+            cp assets/icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          elif [ -f assets/icon512.png ]; then
+            cp assets/icon512.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          fi
+
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage --appimage-extract
+          rm linuxdeploy-x86_64.AppImage
+          mv squashfs-root linuxdeploy-root
+
+          ./linuxdeploy-root/AppRun --appdir $APP_DIR \
+            --executable $APP_DIR/usr/bin/$BINARY_NAME \
+            --desktop-file $APP_DIR/usr/share/applications/${{ env.APP_ID }}.desktop \
+            --output appimage
+
+          mv *.AppImage ${{ env.BINARY_NAME }}-linux-x86_64.AppImage || true
+
+      - name: 上传 Linux x86_64 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
+          generate_release_notes: true
+          files: "*.AppImage"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # Windows x64 构建
+  # ============================================================
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2.13.0
+        with:
+          flutter-version: "${{ env.FLUTTER_VERSION }}"
+          cache: false
+
+      - name: 安装 Flutter 依赖
+        run: |
+          flutter pub get
+          flutter clean
+
+      - name: 启用 Windows 桌面
+        run: |
+          flutter config --enable-windows-desktop
+
+      - name: 构建 Windows x64
+        run: |
+          flutter build windows --release
+
+      - name: 打包 Windows ZIP
+        shell: powershell
+        run: |
+          Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath ${{ env.BINARY_NAME }}-windows-x64.zip
+
+      - name: 上传 Windows Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
+          generate_release_notes: true
+          files: ${{ env.BINARY_NAME }}-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================
+  # Android APK 构建
+  # ============================================================
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2.13.0
+        with:
+          flutter-version: "${{ env.FLUTTER_VERSION }}"
+          cache: false
+
+      - name: 安装 Flutter 依赖
+        run: |
+          flutter doctor -v
+          flutter --version
+          flutter pub get
+
+      - name: 构建 APK
+        run: flutter build apk --release
+
+      - name: 重命名 APK
+        run: |
+          mv build/app/outputs/flutter-apk/app-release.apk ${{ env.BINARY_NAME }}-android.apk
+
+      - name: 上传 Android Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
+          generate_release_notes: true
+          files: ${{ env.BINARY_NAME }}-android.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

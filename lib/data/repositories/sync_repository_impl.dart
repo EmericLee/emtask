@@ -1,0 +1,234 @@
+import '../../core/utils/app_logger.dart';
+import '../../domain/repositories/sync_repository.dart';
+import '../datasources/caldav/caldav_client.dart';
+import '../datasources/caldav/caldav_exceptions.dart';
+import '../datasources/caldav/caldav_models.dart';
+import '../datasources/caldav/ical_serializer.dart';
+import '../database/app_database.dart';
+import 'calendar_repository_impl.dart';
+import 'task_repository_impl.dart';
+
+class SyncRepositoryImpl implements SyncRepository {
+  SyncRepositoryImpl({
+    required AppDatabase db,
+    required CalDavClient client,
+  })  : _db = db,
+        _client = client,
+        _tasks = TaskRepositoryImpl(db),
+        _calendars = CalendarRepositoryImpl(db: db, client: client);
+
+  final AppDatabase _db;
+  final CalDavClient _client;
+  final TaskRepositoryImpl _tasks;
+  final CalendarRepositoryImpl _calendars;
+
+  static const String _tag = 'Sync';
+
+  @override
+  Future<SyncResult> sync() async {
+    AppLogger.instance.i(_tag, '==== 开始完整同步 ====');
+    try {
+      final pushResult = await push();
+      final pullResult = await pull();
+      final r = SyncResult(
+        uploaded: pushResult.uploaded,
+        downloaded: pullResult.downloaded,
+        updated: pullResult.updated,
+        deleted: pullResult.deleted + pushResult.deleted,
+        conflicts: 0,
+        finishedAt: DateTime.now().toUtc(),
+      );
+      AppLogger.instance.i(_tag,
+          '==== 完整同步结束 ↑${r.uploaded} ↓${r.downloaded} ~${r.updated} ✗${r.deleted} ====');
+      return r;
+    } catch (e, s) {
+      AppLogger.instance.e(_tag, '完整同步异常', error: e, stackTrace: s);
+      return SyncResult(
+        error: e,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    }
+  }
+
+  @override
+  Future<SyncResult> push() async {
+    AppLogger.instance.i(_tag, '---- 开始 push ----');
+    var uploaded = 0;
+    var deleted = 0;
+    try {
+      // 上传 dirty 任务
+      final dirty = await _tasks.getDirty();
+      AppLogger.instance.i(_tag, '待上传(dirty)任务: ${dirty.length}');
+      for (final task in dirty) {
+        final cal = await _calendars.getByUrl(task.calendarUrl);
+        if (cal == null) {
+          AppLogger.instance.w(_tag, '跳过任务 uid=${task.uid}：找不到日历 ${task.calendarUrl}');
+          continue;
+        }
+
+        final ical = IcalSerializer.serialize(task);
+        final taskHref = _taskHref(cal.url, task.uid);
+
+        if (task.etag == null) {
+          AppLogger.instance.d(_tag, '新建任务: $taskHref');
+          final etag = await _client.createTask(
+            taskHref: taskHref,
+            icalData: ical,
+          );
+          await _tasks.markSynced(task, etag: etag, href: taskHref);
+        } else {
+          AppLogger.instance.d(_tag, '更新任务: $taskHref');
+          final etag = await _client.updateTask(
+            taskHref: taskHref,
+            icalData: ical,
+            etag: task.etag!,
+          );
+          await _tasks.markSynced(task, etag: etag, href: taskHref);
+        }
+        uploaded++;
+      }
+
+      // 删除 deleted 任务
+      final deletedTasks = await _tasks.getDeleted();
+      AppLogger.instance.i(_tag, '待删除任务: ${deletedTasks.length}');
+      for (final task in deletedTasks) {
+        if (task.href != null && task.etag != null) {
+          try {
+            await _client.deleteTask(
+              taskHref: task.href!,
+              etag: task.etag,
+            );
+          } on CalDavException catch (e) {
+            // 404 视为远端已删除，仍清理本地
+            if (e.statusCode != 404) rethrow;
+            AppLogger.instance.w(_tag, '远端已不存在: ${task.href}');
+          }
+        }
+        await _db.hardDeleteTask(task.localId);
+        deleted++;
+      }
+
+      AppLogger.instance.i(_tag, '---- push 结束 ↑$uploaded ✗$deleted ----');
+      return SyncResult(
+        uploaded: uploaded,
+        deleted: deleted,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    } catch (e, s) {
+      AppLogger.instance.e(_tag, 'push 异常', error: e, stackTrace: s);
+      return SyncResult(
+        uploaded: uploaded,
+        deleted: deleted,
+        error: e,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    }
+  }
+
+  @override
+  Future<SyncResult> pull() async {
+    AppLogger.instance.i(_tag, '---- 开始 pull ----');
+    var downloaded = 0;
+    var updated = 0;
+    var deleted = 0;
+    try {
+      // 先从远端刷新日历列表写入本地数据库，否则本地无日历记录会导致后续跳过
+      final remoteCalendars = await _calendars.refreshFromRemote();
+      AppLogger.instance.i(_tag, '本地日历数: ${remoteCalendars.length}');
+
+      var processedCalendars = 0;
+      for (final cal in remoteCalendars) {
+        if (!cal.syncEnabled) {
+          AppLogger.instance.d(_tag, '跳过日历(未启用同步): ${cal.displayName}');
+          continue;
+        }
+        if (!cal.supportsTasks) {
+          AppLogger.instance.d(_tag, '跳过日历(不支持VTODO): ${cal.displayName}');
+          continue;
+        }
+        processedCalendars++;
+
+        // 检查 ctag 是否变化（getCalendarProperties 可能返回 null，不要用 !）
+        DavCalendarInfo info;
+        try {
+          info = await _client.getCalendarProperties(cal.url) ??
+              DavCalendarInfo(href: cal.url, displayName: cal.displayName);
+        } catch (e) {
+          AppLogger.instance.w(_tag, '获取日历属性失败，继续拉取: ${cal.url}  $e');
+          info = DavCalendarInfo(href: cal.url, displayName: cal.displayName);
+        }
+
+        if (info.ctag != null && info.ctag == cal.ctag) {
+          AppLogger.instance.i(_tag, '日历无变化(ctag相同): ${cal.displayName}');
+          continue;
+        }
+        AppLogger.instance.i(_tag,
+            '日历有变化: ${cal.displayName}  ctag ${cal.ctag ?? "-"} → ${info.ctag ?? "-"}');
+
+        // 拉取所有 VTODO
+        final remoteTasks = await _client.listVTodos(cal.url);
+        AppLogger.instance.i(_tag, '日历 ${cal.displayName} 远端 VTODO: ${remoteTasks.length}');
+
+        final remoteHrefs = <String>{};
+        for (final r in remoteTasks) {
+          remoteHrefs.add(r.href);
+          if (r.icalData == null) continue;
+          final task = IcalSerializer.parseVTodo(
+            r.icalData!,
+            calendarUrl: cal.url,
+            href: r.href,
+            etag: r.etag,
+          );
+          if (task == null) {
+            AppLogger.instance.w(_tag, '解析失败: ${r.href}');
+            continue;
+          }
+          await _db.upsertTaskFromRemote(task);
+          downloaded++;
+        }
+
+        // 删除远端已不存在的本地任务
+        final localTasks = await _db.getAllTasks(calendarUrl: cal.url);
+        for (final local in localTasks) {
+          if (local.href != null && !remoteHrefs.contains(local.href!)) {
+            await _db.hardDeleteTask(local.localId);
+            deleted++;
+          }
+        }
+
+        // 更新 ctag
+        await _calendars.update(cal.copyWith(
+          ctag: info.ctag,
+          syncToken: info.syncToken,
+        ));
+        updated++;
+      }
+
+      AppLogger.instance.i(_tag,
+          '---- pull 结束 ↓$downloaded ~$updated ✗$deleted (处理$processedCalendars个日历) ----');
+      return SyncResult(
+        downloaded: downloaded,
+        updated: updated,
+        deleted: deleted,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    } catch (e, s) {
+      AppLogger.instance.e(_tag, 'pull 异常', error: e, stackTrace: s);
+      return SyncResult(
+        downloaded: downloaded,
+        updated: updated,
+        deleted: deleted,
+        error: e,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    }
+  }
+
+  /// 任务资源的 HREF：`<calendarUrl>/<uid>.ics`
+  static String _taskHref(String calendarUrl, String uid) {
+    final base = calendarUrl.endsWith('/')
+        ? calendarUrl
+        : '$calendarUrl/';
+    return '$base$uid.ics';
+  }
+}
