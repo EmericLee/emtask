@@ -23,12 +23,11 @@ Future<Uint8List> buildTaskListPdf({
   required List<Task> allTasks,
 }) async {
   // 从本地 asset 加载中文字体（离线可用，跨平台一致）。
-  final regularData =
-      await rootBundle.load('assets/fonts/NotoSansSC-Regular.ttf');
-  final boldData =
-      await rootBundle.load('assets/fonts/NotoSansSC-Bold.ttf');
-  final font = pw.Font.ttf(regularData);
-  final boldFont = pw.Font.ttf(boldData);
+  // 使用可变字体，pdf 包取默认实例（wght=400）；Bold 亦用同一字体（与此前效果一致）。
+  final fontData =
+      await rootBundle.load('assets/fonts/NotoSansSC-Variable.ttf');
+  final font = pw.Font.ttf(fontData);
+  final boldFont = font;
 
   final doc = pw.Document(
     theme: pw.ThemeData.withFont(base: font, bold: boldFont),

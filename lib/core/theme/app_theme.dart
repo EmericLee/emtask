@@ -50,12 +50,24 @@ class AppTheme {
   }
 
   static ThemeData _base(ColorScheme scheme) {
-    final base = ThemeData(
+    return ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
       visualDensity: VisualDensity.adaptivePlatformDensity,
-      // 全局指定中文字体，保证 UOS 等缺少中文字体的 Linux 系统正常显示
-      fontFamily: 'NotoSansSC',
+      // 跨平台中文字体回退链：各平台优先使用系统字体（显示效果更好），
+      // 覆盖主流 Linux 发行版预装字体，最后回退到打包的 NotoSansSC 兜底。
+      fontFamilyFallback: const [
+        'PingFang SC',          // macOS / iOS
+        'Microsoft YaHei',      // Windows
+        'Microsoft YaHei UI',   // Windows（UI 变体）
+        'Noto Sans CJK SC',     // Linux（Ubuntu / UOS 思源黑体）
+        'Source Han Sans CN',   // Linux（思源黑体 CN 命名）
+        'Source Han Sans SC',   // Linux（思源黑体 SC 命名）
+        'WenQuanYi Micro Hei',  // Linux（文泉驿微米黑）
+        'WenQuanYi Zen Hei',    // Linux（文泉驿正黑）
+        'Droid Sans Fallback',  // Android / 嵌入式 Linux
+        'NotoSansSC',           // 打包字体（UOS 等兜底）
+      ],
       appBarTheme: AppBarTheme(
         centerTitle: false,
         backgroundColor: scheme.surface,
@@ -74,14 +86,6 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
         ),
-      ),
-    );
-    // 提高正文默认字重至 w500（Medium），避免 NotoSansSC Regular 显示过细
-    return base.copyWith(
-      textTheme: base.textTheme.copyWith(
-        bodyLarge: base.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
-        bodyMedium: base.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
-        bodySmall: base.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
       ),
     );
   }

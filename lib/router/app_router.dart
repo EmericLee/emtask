@@ -16,7 +16,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     initialLocation: '/my-work',
     routes: <RouteBase>[
       ShellRoute(
-        builder: (context, state, child) => _AppScaffold(child: child),
+        builder: (context, state, child) => _AppScaffold(
+          location: state.uri.toString(),
+          child: child,
+        ),
         routes: [
           GoRoute(
             path: '/my-work',
@@ -63,15 +66,64 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 });
 
 /// 主框架：侧边导航栏 + 内容区。
-class _AppScaffold extends StatelessWidget {
-  const _AppScaffold({required this.child});
+class _AppScaffold extends StatefulWidget {
+  const _AppScaffold({required this.location, required this.child});
 
+  final String location;
   final Widget child;
 
   @override
+  State<_AppScaffold> createState() => _AppScaffoldState();
+}
+
+class _AppScaffoldState extends State<_AppScaffold>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<Offset> _slide;
+  String? _lastTopRoute;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 280),
+      vsync: this,
+    );
+    _slide = Tween<Offset>(
+      begin: const Offset(1.0, 0.0),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
+    _controller.value = 1.0; // 首次显示无需动画
+    _lastTopRoute = _topRoute(widget.location);
+  }
+
+  @override
+  void didUpdateWidget(_AppScaffold oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final current = _topRoute(widget.location);
+    if (_lastTopRoute != current) {
+      _controller.forward(from: 0.0);
+    }
+    _lastTopRoute = current;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// 提取顶级路由路径（同功能区内的子路由切换不触发动画）。
+  String _topRoute(String location) {
+    final parts = location.split('/');
+    if (parts.length >= 2) return '/${parts[1]}';
+    return location;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final location = GoRouterState.of(context).uri.toString();
-    final index = _selectedIndex(location);
+    final index = _selectedIndex(widget.location);
+    final theme = Theme.of(context);
 
     return Scaffold(
       body: Row(
@@ -80,6 +132,17 @@ class _AppScaffold extends StatelessWidget {
             selectedIndex: index,
             onDestinationSelected: (i) => context.go(_pathForIndex(i)),
             extended: MediaQuery.of(context).size.width > 1100,
+            minWidth: 56,
+            minExtendedWidth: 120,
+            selectedLabelTextStyle: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+            unselectedLabelTextStyle: TextStyle(
+              fontSize: 16,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
             destinations: const [
               NavigationRailDestination(
                 icon: Icon(Icons.work_outline),
@@ -114,7 +177,13 @@ class _AppScaffold extends StatelessWidget {
             ],
           ),
           const VerticalDivider(width: 1),
-          Expanded(child: child),
+          // 内容区：切换功能页时从右侧滑入
+          Expanded(
+            child: SlideTransition(
+              position: _slide,
+              child: widget.child,
+            ),
+          ),
         ],
       ),
     );
