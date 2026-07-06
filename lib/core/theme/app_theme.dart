@@ -50,7 +50,7 @@ class AppTheme {
   }
 
   static ThemeData _base(ColorScheme scheme) {
-    return ThemeData(
+    final base = ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
       visualDensity: VisualDensity.adaptivePlatformDensity,
@@ -74,6 +74,14 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
         ),
+      ),
+    );
+    // 提高正文默认字重至 w500（Medium），避免 NotoSansSC Regular 显示过细
+    return base.copyWith(
+      textTheme: base.textTheme.copyWith(
+        bodyLarge: base.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+        bodyMedium: base.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+        bodySmall: base.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w500),
       ),
     );
   }
