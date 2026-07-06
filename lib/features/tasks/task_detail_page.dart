@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +10,7 @@ import '../../domain/entities/calendar.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
 import '../sync/sync_providers.dart';
+import 'task_providers.dart';
 
 /// 任务详情 / 编辑页（统一入口）。
 ///
@@ -212,8 +215,9 @@ class _DetailListState extends State<_DetailList> {
   bool _editingTitle = false;
   late final TextEditingController _titleCtrl;
   late final FocusNode _titleFocus;
-
-  static final _fmt = DateFormat('yyyy-MM-dd HH:mm');
+  // 状态/优先级菜单定位：挂在 value 内容区域上
+  final GlobalKey _statusValueKey = GlobalKey();
+  final GlobalKey _priorityValueKey = GlobalKey();
 
   @override
   void initState() {
@@ -277,6 +281,85 @@ class _DetailListState extends State<_DetailList> {
 
   Future<void> _setPriority(TaskPriority p) async {
     await widget.onUpdate((t) => t.copyWith(priority: p));
+  }
+
+  /// 弹出状态选择菜单（对齐 value 区域左侧，下方/上方弹出）。
+  Future<void> _showStatusMenu() async {
+    final selected = await _showMenuAt<TaskStatus>(
+      _statusValueKey,
+      (ctx) => TaskStatus.values.map((s) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return PopupMenuItem<TaskStatus>(
+          value: s,
+          child: Row(
+            children: [
+              Icon(_statusIcon(s), size: 18, color: _statusColor(s, scheme)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(_statusLabel(s))),
+              if (s == widget.task.status)
+                Icon(Icons.check, size: 16, color: scheme.primary),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+    if (selected != null) await _setStatus(selected);
+  }
+
+  /// 弹出优先级选择菜单（对齐 value 区域左侧，下方/上方弹出）。
+  Future<void> _showPriorityMenu() async {
+    final selected = await _showMenuAt<TaskPriority>(
+      _priorityValueKey,
+      (ctx) => TaskPriority.values.map((p) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return PopupMenuItem<TaskPriority>(
+          value: p,
+          child: Row(
+            children: [
+              Icon(Icons.flag_outlined, size: 18, color: _priorityColor(p)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(_priorityLabel(p))),
+              if (p == widget.task.priority)
+                Icon(Icons.check, size: 16, color: scheme.primary),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+    if (selected != null) await _setPriority(selected);
+  }
+
+  /// 通用菜单弹出：基于 [valueKey] 定位 value 内容区域左侧，紧贴下方/上方显示。
+  Future<T?> _showMenuAt<T>(
+    GlobalKey valueKey,
+    List<PopupMenuEntry<T>> Function(BuildContext) itemBuilder,
+  ) async {
+    final ctx = valueKey.currentContext;
+    if (ctx == null) return null;
+    final box = ctx.findRenderObject() as RenderBox;
+    final topLeft = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    final media = MediaQuery.of(context);
+    const menuHeight = 240.0;
+    const menuWidth = 220.0;
+    // 下方空间不足则向上弹出
+    final showBelow =
+        topLeft.dy + size.height + menuHeight + 16 < media.size.height;
+    final top = showBelow ? topLeft.dy + size.height : topLeft.dy - menuHeight;
+    // 左对齐 value 区域左侧，但不超过屏幕右边
+    final left = topLeft.dx
+        .clamp(0.0, math.max(0.0, media.size.width - menuWidth))
+        .toDouble();
+    return showMenu<T>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        left,
+        top,
+        media.size.width - left - menuWidth,
+        0,
+      ),
+      items: itemBuilder(context),
+    );
   }
 
   Future<void> _setPercent(int p) async {
@@ -364,31 +447,6 @@ class _DetailListState extends State<_DetailList> {
     await widget.onUpdate((t) => t.copyWith(categories: list));
   }
 
-  Future<void> _pickDateTime(
-    String title,
-    DateTime? initial,
-    ValueChanged<DateTime?> onSaved,
-  ) async {
-    final now = DateTime.now();
-    if (!mounted) return;
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initial ?? now,
-      firstDate: DateTime(now.year - 5),
-      lastDate: DateTime(now.year + 5),
-    );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial ?? now),
-    );
-    if (time == null) return;
-    onSaved(
-      DateTime(date.year, date.month, date.day, time.hour, time.minute)
-          .toUtc(),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -436,120 +494,6 @@ class _DetailListState extends State<_DetailList> {
             },
           ),
         const _Divider(),
-        // 状态：整行点击弹出下拉
-        PopupMenuButton<TaskStatus>(
-          onSelected: _setStatus,
-          itemBuilder: (ctx) => TaskStatus.values.map((s) {
-            return PopupMenuItem<TaskStatus>(
-              value: s,
-              child: Row(
-                children: [
-                  Icon(_statusIcon(s),
-                      size: 18,
-                      color: _statusColor(s, Theme.of(ctx).colorScheme)),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_statusLabel(s))),
-                  if (s == task.status)
-                    Icon(Icons.check, size: 16, color: scheme.primary),
-                ],
-              ),
-            );
-          }).toList(),
-          child: _EditTile(
-            icon: _statusIcon(task.status),
-            iconColor: _statusColor(task.status, scheme),
-            label: '状态',
-            value: _statusLabel(task.status),
-            trailing: const Icon(Icons.unfold_more, size: 18),
-          ),
-        ),
-        // 优先级：整行点击弹出下拉
-        PopupMenuButton<TaskPriority>(
-          onSelected: _setPriority,
-          itemBuilder: (ctx) => TaskPriority.values.map((p) {
-            return PopupMenuItem<TaskPriority>(
-              value: p,
-              child: Row(
-                children: [
-                  Icon(Icons.flag_outlined, size: 18, color: _priorityColor(p)),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_priorityLabel(p))),
-                  if (p == task.priority)
-                    Icon(Icons.check, size: 16, color: scheme.primary),
-                ],
-              ),
-            );
-          }).toList(),
-          child: _EditTile(
-            icon: Icons.flag_outlined,
-            iconColor: _priorityColor(task.priority),
-            label: '优先级',
-            value: _priorityLabel(task.priority),
-            trailing: const Icon(Icons.unfold_more, size: 18),
-          ),
-        ),
-        // 进度：内联 Slider（点击展开）
-        _PercentEditor(
-          task: task,
-          onUpdate: _setPercent,
-        ),
-        const _Divider(),
-        // 时间信息：开始 / 截止 / 完成
-        _EditTile(
-          icon: Icons.play_arrow_outlined,
-          label: '开始时间',
-          value: task.start == null
-              ? '未设置'
-              : _fmt.format(task.start!.toLocal()),
-          valueColor: scheme.onSurface,
-          trailing: task.start != null
-              ? IconButton(
-                  icon: const Icon(Icons.clear, size: 18),
-                  tooltip: '清除',
-                  onPressed: () =>
-                      widget.onUpdate((t) => t.copyWith(start: null)),
-                )
-              : const Icon(Icons.chevron_right, size: 18),
-          onTap: () => _pickDateTime(
-            '开始时间',
-            task.start,
-            (v) => widget.onUpdate((t) => t.copyWith(start: v)),
-          ),
-        ),
-        _EditTile(
-          icon: Icons.event_outlined,
-          label: '截止时间',
-          value: task.due == null
-              ? '未设置'
-              : _fmt.format(task.due!.toLocal()),
-          valueColor: task.isOverdue ? scheme.error : scheme.onSurface,
-          trailing: task.due != null
-              ? IconButton(
-                  icon: const Icon(Icons.clear, size: 18),
-                  tooltip: '清除',
-                  onPressed: () =>
-                      widget.onUpdate((t) => t.copyWith(due: null)),
-                )
-              : const Icon(Icons.chevron_right, size: 18),
-          onTap: () => _pickDateTime(
-            '截止时间',
-            task.due,
-            (v) => widget.onUpdate((t) => t.copyWith(due: v)),
-          ),
-        ),
-        _EditTile(
-          icon: Icons.check_circle_outline,
-          label: '完成时间',
-          value: task.completed == null
-              ? '未完成'
-              : _fmt.format(task.completed!.toLocal()),
-          valueColor: scheme.outline,
-          onTap: task.completed != null
-              ? () =>
-                  widget.onUpdate((t) => t.copyWith(completed: null))
-              : null,
-        ),
-        const _Divider(),
         // 描述
         _EditTile(
           icon: Icons.notes,
@@ -563,6 +507,54 @@ class _DetailListState extends State<_DetailList> {
           maxLines: 4,
           trailing: const Icon(Icons.edit_outlined, size: 18),
           onTap: _editDescription,
+        ),
+        const _Divider(),
+        // 时间信息：开始 / 截止 / 完成
+        _DateTimeField(
+          icon: Icons.play_arrow_outlined,
+          label: '开始时间',
+          value: task.start,
+          onSaved: (v) => widget.onUpdate((t) => t.copyWith(start: v)),
+        ),
+        _DateTimeField(
+          icon: Icons.event_outlined,
+          label: '截止时间',
+          value: task.due,
+          valueColor: task.isOverdue ? scheme.error : null,
+          onSaved: (v) => widget.onUpdate((t) => t.copyWith(due: v)),
+        ),
+        _DateTimeField(
+          icon: Icons.check_circle_outline,
+          label: '完成时间',
+          value: task.completed,
+          valueColor: scheme.outline,
+          onSaved: (v) => widget.onUpdate((t) => t.copyWith(completed: v)),
+        ),
+        const _Divider(),
+        // 状态：整行点击，菜单对齐 value 区域左侧下方/上方弹出
+        _EditTile(
+          icon: _statusIcon(task.status),
+          iconColor: _statusColor(task.status, scheme),
+          label: '状态',
+          value: _statusLabel(task.status),
+          valueKey: _statusValueKey,
+          trailing: const Icon(Icons.unfold_more, size: 18),
+          onTap: _showStatusMenu,
+        ),
+        // 进度：内联 Slider（点击展开）
+        _PercentEditor(
+          task: task,
+          onUpdate: _setPercent,
+        ),
+        // 优先级：整行点击，菜单对齐 value 区域左侧下方/上方弹出
+        _EditTile(
+          icon: Icons.flag_outlined,
+          iconColor: _priorityColor(task.priority),
+          label: '优先级',
+          value: _priorityLabel(task.priority),
+          valueKey: _priorityValueKey,
+          trailing: const Icon(Icons.unfold_more, size: 18),
+          onTap: _showPriorityMenu,
         ),
         const _Divider(),
         // 分类标签
@@ -605,7 +597,7 @@ class _DetailListState extends State<_DetailList> {
   // ---------- 辅助方法 ----------
 
   static String _statusLabel(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => '未开始',
+        TaskStatus.needsAction => '需要操作',
         TaskStatus.inProcess => '进行中',
         TaskStatus.completed => '已完成',
         TaskStatus.cancelled => '已取消',
@@ -638,6 +630,292 @@ class _DetailListState extends State<_DetailList> {
         TaskPriority.medium => Colors.orange,
         TaskPriority.low => Colors.blue,
       };
+}
+
+/// 日期时间字段：点击就地弹出紧凑选择面板（含清除按钮）。
+///
+/// 默认仅显示日期；开启"日期字段显示时间"配置后可选择时分。
+/// 面板定位到触发行下方；空间不足时向上弹出。
+class _DateTimeField extends ConsumerStatefulWidget {
+  const _DateTimeField({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.onSaved,
+    this.valueColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final DateTime? value;
+  final Color? valueColor;
+  final ValueChanged<DateTime?> onSaved;
+
+  @override
+  ConsumerState<_DateTimeField> createState() => _DateTimeFieldState();
+}
+
+class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
+  final GlobalKey _tileKey = GlobalKey();
+  static final _fmtDate = DateFormat('yyyy-MM-dd');
+  static final _fmtDateTime = DateFormat('yyyy-MM-dd HH:mm');
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final showTime = ref.watch(showTimeInDateFieldProvider);
+    final fmt = showTime ? _fmtDateTime : _fmtDate;
+    return _EditTile(
+      key: _tileKey,
+      icon: widget.icon,
+      label: widget.label,
+      value: widget.value == null
+          ? '未设置'
+          : fmt.format(widget.value!.toLocal()),
+      valueColor: widget.valueColor ?? scheme.onSurface,
+      trailing: widget.value != null
+          ? IconButton(
+              icon: const Icon(Icons.clear, size: 18),
+              tooltip: '清除',
+              onPressed: () => widget.onSaved(null),
+            )
+          : const Icon(Icons.chevron_right, size: 18),
+      onTap: _openPopover,
+    );
+  }
+
+  void _openPopover() {
+    final ctx = _tileKey.currentContext;
+    if (ctx == null) return;
+    final box = ctx.findRenderObject() as RenderBox;
+    final size = box.size;
+    final topLeft = box.localToGlobal(Offset.zero);
+    final overlay = Overlay.of(ctx);
+    final media = MediaQuery.of(ctx);
+    final showTime = ref.read(showTimeInDateFieldProvider);
+
+    const panelWidth = 320.0;
+    final panelHeight = showTime ? 500.0 : 440.0;
+    // 下方空间不足则向上弹出
+    final showBelow =
+        topLeft.dy + size.height + panelHeight + 16 < media.size.height;
+    final top = showBelow
+        ? topLeft.dy + size.height + 4
+        : math.max(8.0, topLeft.dy - panelHeight - 4);
+    final left = (topLeft.dx)
+        .clamp(8.0, math.max(8.0, media.size.width - panelWidth - 8))
+        .toDouble();
+
+    late OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => _DateTimePopover(
+        left: left,
+        top: top,
+        panelWidth: panelWidth,
+        initial: widget.value ?? DateTime.now(),
+        showTime: showTime,
+        onCancel: () => entry.remove(),
+        onClear: () {
+          entry.remove();
+          widget.onSaved(null);
+        },
+        onConfirm: (v) {
+          entry.remove();
+          widget.onSaved(v);
+        },
+      ),
+    );
+    overlay.insert(entry);
+  }
+}
+
+/// 紧凑日期时间选择面板（OverlayEntry 内容）。
+class _DateTimePopover extends StatefulWidget {
+  const _DateTimePopover({
+    required this.left,
+    required this.top,
+    required this.panelWidth,
+    required this.initial,
+    required this.showTime,
+    required this.onCancel,
+    required this.onClear,
+    required this.onConfirm,
+  });
+
+  final double left;
+  final double top;
+  final double panelWidth;
+  final DateTime initial;
+  final bool showTime;
+  final VoidCallback onCancel;
+  final VoidCallback onClear;
+  final ValueChanged<DateTime> onConfirm;
+
+  @override
+  State<_DateTimePopover> createState() => _DateTimePopoverState();
+}
+
+class _DateTimePopoverState extends State<_DateTimePopover> {
+  late DateTime _date;
+  late int _hour;
+  late int _minute;
+
+  @override
+  void initState() {
+    super.initState();
+    _date = DateTime(widget.initial.year, widget.initial.month, widget.initial.day);
+    _hour = widget.initial.hour;
+    _minute = widget.initial.minute;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Stack(
+      children: [
+        // 遮罩：点击空白处关闭
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: widget.onCancel,
+          child: const SizedBox.expand(),
+        ),
+        Positioned(
+          left: widget.left,
+          top: widget.top,
+          child: TapRegion(
+            onTapOutside: (_) => widget.onCancel(),
+            child: Material(
+              elevation: 8,
+              borderRadius: BorderRadius.circular(12),
+              color: scheme.surface,
+              surfaceTintColor: scheme.surfaceTint,
+              child: SizedBox(
+                width: widget.panelWidth,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SizedBox(
+                        height: 380,
+                        child: CalendarDatePicker(
+                          initialDate: _date,
+                          firstDate: DateTime(widget.initial.year - 5),
+                          lastDate: DateTime(widget.initial.year + 5),
+                          onDateChanged: (d) => setState(() => _date = d),
+                        ),
+                      ),
+                      const Divider(height: 1),
+                      // 时间行（仅 showTime 时显示）
+                      if (widget.showTime)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 4),
+                          child: Row(
+                            children: [
+                              Text('时间',
+                                  style: theme.textTheme.labelMedium
+                                      ?.copyWith(color: scheme.outline)),
+                              const SizedBox(width: 8),
+                              _TimeSpinner(
+                                value: _hour,
+                                maxValue: 23,
+                                onChanged: (v) => setState(() => _hour = v),
+                              ),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 4),
+                                child: Text(':'),
+                              ),
+                              _TimeSpinner(
+                                value: _minute,
+                                maxValue: 59,
+                                onChanged: (v) => setState(() => _minute = v),
+                              ),
+                            ],
+                          ),
+                        ),
+                      // 按钮行：清除 / 取消 / 确定
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 4),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            TextButton(
+                                onPressed: widget.onClear,
+                                child: const Text('清除')),
+                            TextButton(
+                                onPressed: widget.onCancel,
+                                child: const Text('取消')),
+                            FilledButton(
+                              onPressed: () => widget.onConfirm(
+                                DateTime(_date.year, _date.month, _date.day,
+                                        _hour, _minute)
+                                    .toUtc(),
+                              ),
+                              child: const Text('确定'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 紧凑时间数字 Spinner（点击上下箭头调整，循环）。
+class _TimeSpinner extends StatelessWidget {
+  const _TimeSpinner({
+    required this.value,
+    required this.maxValue,
+    required this.onChanged,
+  });
+
+  final int value;
+  final int maxValue;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 44,
+      decoration: BoxDecoration(
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: () => onChanged((value + 1) % (maxValue + 1)),
+            child: Icon(Icons.arrow_drop_up, size: 16, color: scheme.outline),
+          ),
+          Text(
+            value.toString().padLeft(2, '0'),
+            style: const TextStyle(
+              fontFeatures: [FontFeature.tabularFigures()],
+              fontSize: 14,
+            ),
+          ),
+          InkWell(
+            onTap: () =>
+                onChanged((value - 1 + maxValue + 1) % (maxValue + 1)),
+            child:
+                Icon(Icons.arrow_drop_down, size: 16, color: scheme.outline),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// 进度就地编辑：点击行展开内联 Slider。
@@ -720,6 +998,7 @@ class _PercentEditorState extends State<_PercentEditor> {
 
 class _EditTile extends StatelessWidget {
   const _EditTile({
+    super.key,
     required this.icon,
     required this.label,
     required this.value,
@@ -730,18 +1009,21 @@ class _EditTile extends StatelessWidget {
     this.style,
     this.maxLines = 1,
     this.mono = false,
+    this.valueKey,
   });
 
   final IconData icon;
-  final Color? iconColor;
   final String label;
   final String value;
+  final VoidCallback? onTap;
+  final Color? iconColor;
   final Color? valueColor;
   final Widget? trailing;
   final TextStyle? style;
   final int maxLines;
   final bool mono;
-  final VoidCallback? onTap;
+  /// 用于定位 value 内容区域（供弹出菜单对齐用）。
+  final GlobalKey? valueKey;
 
   @override
   Widget build(BuildContext context) {
@@ -770,6 +1052,7 @@ class _EditTile extends StatelessWidget {
             Expanded(
               child: Text(
                 value,
+                key: valueKey,
                 maxLines: maxLines,
                 overflow: TextOverflow.ellipsis,
                 style: style ??
@@ -1208,7 +1491,7 @@ class _NewTaskFormState extends State<_NewTaskForm> {
   // ---------- 辅助 ----------
 
   static String _statusLabel(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => '未开始',
+        TaskStatus.needsAction => '需要操作',
         TaskStatus.inProcess => '进行中',
         TaskStatus.completed => '已完成',
         TaskStatus.cancelled => '已取消',

@@ -161,6 +161,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
           _OrphanModeSelector(ref: ref),
+          const SizedBox(height: 12),
+          // 日期字段是否显示时间
+          SwitchListTile(
+            title: const Text('日期字段显示时间'),
+            subtitle: const Text('关闭时仅显示日期，开启后日期选择器可设置时分'),
+            value: ref.watch(showTimeInDateFieldProvider),
+            onChanged: (v) =>
+                ref.read(showTimeInDateFieldProvider.notifier).state = v,
+          ),
           const SizedBox(height: 24),
           Card(
             child: ListTile(

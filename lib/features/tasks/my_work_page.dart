@@ -14,9 +14,6 @@ import '../../domain/entities/task_status.dart';
 import 'task_list_pdf.dart';
 import 'task_providers.dart';
 
-/// 星标任务 UID 集合（当前会话内存状态，不持久化）。
-final _starredUidsProvider = StateProvider<Set<String>>((ref) => {});
-
 /// PDF 生成所需的数据包（避免两个按钮重复计算）。
 class _PdfData {
   final Map<String, List<Task>> groups;
@@ -836,8 +833,6 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final starred = ref.watch(_starredUidsProvider);
-    final isStarred = starred.contains(widget.task.uid);
     final fmt = DateFormat('MM/dd');
     final hasNote = widget.task.description.trim().isNotEmpty;
 
@@ -916,6 +911,36 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                                   ),
                                 ),
                               ),
+                              // 状态图标（非"需要操作"时显示）
+                              if (widget.task.status != TaskStatus.needsAction)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 4),
+                                  child: Tooltip(
+                                    message: _statusLabel(widget.task.status),
+                                    child: Icon(
+                                      _statusIcon(widget.task.status),
+                                      size: 14,
+                                      color: _statusColor(
+                                          widget.task.status, scheme),
+                                    ),
+                                  ),
+                                ),
+                              // 完成度（0~100 之间显示）
+                              if (widget.task.percent > 0 &&
+                                  widget.task.percent < 100)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 4),
+                                  child: Text(
+                                    '${widget.task.percent}%',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.outline,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures()
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              // 描述图标
                               if (hasNote)
                                 Padding(
                                   padding: const EdgeInsets.only(left: 4),
@@ -962,9 +987,11 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                           ),
                         ),
                       ),
-                    // 完成按钮：悬停或已完成时显示。
-                    if (_hovering || widget.task.isCompleted)
-                      _IconButton(
+                    // 完成按钮：默认显示（淡化），悬停或已完成时正常显示
+                    Opacity(
+                      opacity:
+                          (_hovering || widget.task.isCompleted) ? 1.0 : 0.4,
+                      child: _IconButton(
                         icon: widget.task.isCompleted
                             ? Icons.check_circle
                             : Icons.radio_button_unchecked,
@@ -973,16 +1000,43 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                             : scheme.outline,
                         onPressed: () => _toggleCompletion(ref),
                       ),
-                    // 更多操作
-                    _IconButton(
-                      icon: Icons.more_vert,
-                      onPressed: () => _showMoreMenu(context, ref),
                     ),
-                    // 星标
-                    _IconButton(
-                      icon: isStarred ? Icons.star : Icons.star_border,
-                      color: isStarred ? Colors.amber : scheme.outline,
-                      onPressed: () => _toggleStar(ref),
+                    // 优先级：点击弹出选择菜单（替换原星标位置）
+                    PopupMenuButton<TaskPriority>(
+                      onSelected: (p) => _setPriority(ref, p),
+                      padding: EdgeInsets.zero,
+                      tooltip: '优先级：${_priorityLabel(widget.task.priority)}',
+                      itemBuilder: (ctx) => TaskPriority.values.map((p) {
+                        final cs = Theme.of(ctx).colorScheme;
+                        return PopupMenuItem<TaskPriority>(
+                          value: p,
+                          child: Row(
+                            children: [
+                              Icon(Icons.flag_outlined,
+                                  size: 16, color: _priorityColor(p)),
+                              const SizedBox(width: 6),
+                              Text(_priorityLabel(p)),
+                              if (p == widget.task.priority)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Icon(Icons.check,
+                                      size: 14, color: cs.primary),
+                                ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: Icon(
+                          Icons.flag_outlined,
+                          size: 20,
+                          color: widget.task.priority == TaskPriority.none
+                              ? scheme.outline
+                              : _priorityColor(widget.task.priority),
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1025,52 +1079,31 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
     }
   }
 
-  /// 切换星标状态（仅内存）。
-  void _toggleStar(WidgetRef ref) {
-    final current = ref.read(_starredUidsProvider);
-    final next = Set<String>.from(current);
-    if (next.contains(widget.task.uid)) {
-      next.remove(widget.task.uid);
-    } else {
-      next.add(widget.task.uid);
+  /// 设置任务优先级（持久化）。
+  Future<void> _setPriority(WidgetRef ref, TaskPriority p) async {
+    if (p == widget.task.priority) return;
+    final repo = ref.read(taskRepositoryProvider);
+    final now = DateTime.now().toUtc();
+    final updated = widget.task.copyWith(
+      priority: p,
+      lastModified: now,
+      localModifiedAt: now,
+      dirty: true,
+    );
+    try {
+      await repo.update(updated);
+    } catch (e) {
+      if (ref.context.mounted) {
+        ScaffoldMessenger.of(ref.context).showSnackBar(
+          SnackBar(content: Text('更新失败: $e')),
+        );
+      }
     }
-    ref.read(_starredUidsProvider.notifier).state = next;
   }
 
   /// 跳转到任务详情页。
   void _showDetail(BuildContext context) {
     context.push('/tasks/${widget.task.localId}');
-  }
-
-  /// 显示更多操作菜单。
-  void _showMoreMenu(BuildContext context, WidgetRef ref) {
-    final renderBox = context.findRenderObject() as RenderBox?;
-    final offset = renderBox?.localToGlobal(Offset.zero) ?? Offset.zero;
-
-    showMenu<String>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        offset.dx,
-        offset.dy + (renderBox?.size.height ?? 0),
-        offset.dx + (renderBox?.size.width ?? 0),
-        offset.dy,
-      ),
-      items: [
-        const PopupMenuItem(value: 'detail', child: Text('查看详情')),
-        const PopupMenuItem(value: 'toggle', child: Text('标记完成/未完成')),
-        const PopupMenuItem(value: 'star', child: Text('收藏/取消收藏')),
-      ],
-    ).then((value) {
-      if (!context.mounted) return;
-      switch (value) {
-        case 'detail':
-          context.go('/tasks/${widget.task.localId}');
-        case 'toggle':
-          _toggleCompletion(ref);
-        case 'star':
-          _toggleStar(ref);
-      }
-    });
   }
 }
 
@@ -1164,3 +1197,40 @@ class _EmptyState extends StatelessWidget {
     );
   }
 }
+
+// ==================== 任务条信息图标辅助函数 ====================
+
+String _statusLabel(TaskStatus s) => switch (s) {
+      TaskStatus.needsAction => '需要操作',
+      TaskStatus.inProcess => '进行中',
+      TaskStatus.completed => '已完成',
+      TaskStatus.cancelled => '已取消',
+    };
+
+String _priorityLabel(TaskPriority p) => switch (p) {
+      TaskPriority.none => '无',
+      TaskPriority.high => '高',
+      TaskPriority.medium => '中',
+      TaskPriority.low => '低',
+    };
+
+IconData _statusIcon(TaskStatus s) => switch (s) {
+      TaskStatus.needsAction => Icons.radio_button_unchecked,
+      TaskStatus.inProcess => Icons.pending_actions,
+      TaskStatus.completed => Icons.check_circle,
+      TaskStatus.cancelled => Icons.cancel_outlined,
+    };
+
+Color _statusColor(TaskStatus s, ColorScheme scheme) => switch (s) {
+      TaskStatus.needsAction => scheme.outline,
+      TaskStatus.inProcess => scheme.secondary,
+      TaskStatus.completed => scheme.primary,
+      TaskStatus.cancelled => scheme.outline,
+    };
+
+Color _priorityColor(TaskPriority p) => switch (p) {
+      TaskPriority.none => Colors.grey,
+      TaskPriority.high => Colors.red,
+      TaskPriority.medium => Colors.orange,
+      TaskPriority.low => Colors.blue,
+    };

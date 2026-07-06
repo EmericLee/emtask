@@ -39,6 +39,9 @@ final orphanDisplayModeProvider = StateProvider<OrphanDisplayMode>(
 /// 是否隐藏已完成。
 final hideCompletedProvider = StateProvider<bool>((ref) => false);
 
+/// 日期字段是否显示时间（默认只显示日期，可在系统配置中开启）。
+final showTimeInDateFieldProvider = StateProvider<bool>((ref) => false);
+
 /// 任务列表（按选中日历过滤，响应式）。
 final taskListProvider = StreamProvider<List<Task>>((ref) {
   final repo = ref.watch(taskRepositoryProvider);
