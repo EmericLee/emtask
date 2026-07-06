@@ -1,7 +1,7 @@
 name: em_task
 description: "EM Task - 跨平台任务管理器，支持 CalDAV / Nextcloud Tasks 同步。"
 publish_to: 'none'
-version: 0.0.8+8
+version: 0.0.9+9
 
 environment:
   # sdk: ^3.11.0
@@ -69,8 +69,13 @@ flutter:
     - assets/fonts/
   fonts:
     # 全局中文字体，解决 UOS 等缺少中文字体的 Linux 发行版下方块问题
+    # 将 w500/w600 映射到 Bold，避免标题/按钮因缺少 Medium 字重而显示过细
     - family: NotoSansSC
       fonts:
         - asset: assets/fonts/NotoSansSC-Regular.ttf
+        - asset: assets/fonts/NotoSansSC-Bold.ttf
+          weight: 500
+        - asset: assets/fonts/NotoSansSC-Bold.ttf
+          weight: 600
         - asset: assets/fonts/NotoSansSC-Bold.ttf
           weight: 700
