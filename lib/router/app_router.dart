@@ -134,12 +134,12 @@ class _AppScaffoldState extends State<_AppScaffold>
             extended: MediaQuery.of(context).size.width > 1100,
             minWidth: 56,
             minExtendedWidth: 120,
-            selectedLabelTextStyle: TextStyle(
+            selectedLabelTextStyle: theme.textTheme.bodyLarge?.copyWith(
               fontSize: 16,
               fontWeight: FontWeight.w600,
               color: theme.colorScheme.onSurface,
             ),
-            unselectedLabelTextStyle: TextStyle(
+            unselectedLabelTextStyle: theme.textTheme.bodyLarge?.copyWith(
               fontSize: 16,
               color: theme.colorScheme.onSurfaceVariant,
             ),

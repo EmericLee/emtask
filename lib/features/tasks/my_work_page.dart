@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
@@ -168,23 +169,34 @@ class MyWorkPage extends ConsumerWidget {
         );
         final fileName =
             '当前任务清单_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.pdf';
-        // 弹出系统保存对话框，让用户选择保存路径。
-        final savePath = await FilePicker.platform.saveFile(
-          dialogTitle: '保存 PDF 文件',
-          fileName: fileName,
-          type: FileType.custom,
-          allowedExtensions: ['pdf'],
-          bytes: bytes,
-        );
-        // 桌面端 saveFile 返回路径；Web 端 bytes 已直接下载。
-        if (savePath != null && savePath.isNotEmpty) {
-          final file = File(savePath);
-          await file.writeAsBytes(bytes);
-          if (context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('已保存：$savePath')),
-            );
-          }
+
+        // 尝试弹出系统保存对话框；Linux 上可能缺少 zenity 等依赖，失败时回退到 ~/Downloads。
+        String? savePath;
+        try {
+          savePath = await FilePicker.platform.saveFile(
+            dialogTitle: '保存 PDF 文件',
+            fileName: fileName,
+            type: FileType.custom,
+            allowedExtensions: ['pdf'],
+            bytes: bytes,
+          );
+        } catch (_) {
+          // zenity 未安装等情况，savePath 保持 null，下方回退处理
+          savePath = null;
+        }
+
+        // 对话框取消或不可用时回退到下载目录
+        if (savePath == null || savePath.isEmpty) {
+          final dir = await getDownloadsDirectory();
+          savePath = '${dir?.path ?? Platform.environment['HOME'] ?? '.'}/$fileName';
+        }
+
+        final file = File(savePath);
+        await file.writeAsBytes(bytes);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已保存：$savePath')),
+          );
         }
       } catch (e) {
         if (context.mounted) {

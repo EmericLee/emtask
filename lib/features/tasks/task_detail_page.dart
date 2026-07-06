@@ -370,40 +370,6 @@ class _DetailListState extends State<_DetailList> {
     ValueChanged<DateTime?> onSaved,
   ) async {
     final now = DateTime.now();
-    final cleared = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.edit_calendar),
-              title: Text(initial == null
-                  ? '选择日期时间'
-                  : _fmt.format(initial.toLocal())),
-              onTap: () => Navigator.pop(ctx, false),
-            ),
-            if (initial != null)
-              ListTile(
-                leading: const Icon(Icons.clear),
-                title: const Text('清除时间'),
-                onTap: () => Navigator.pop(ctx, true),
-              ),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-        ],
-      ),
-    );
-    if (cleared == null) return;
-    if (cleared) {
-      onSaved(null);
-      return;
-    }
     if (!mounted) return;
     final date = await showDatePicker(
       context: context,
@@ -470,26 +436,56 @@ class _DetailListState extends State<_DetailList> {
             },
           ),
         const _Divider(),
-        // 状态：PopupMenuButton 就地下拉
-        _EditTile(
-          icon: _statusIcon(task.status),
-          iconColor: _statusColor(task.status, scheme),
-          label: '状态',
-          value: _statusLabel(task.status),
-          trailing: _StatusPopup(
-            current: task.status,
-            onSelected: _setStatus,
+        // 状态：整行点击弹出下拉
+        PopupMenuButton<TaskStatus>(
+          onSelected: _setStatus,
+          itemBuilder: (ctx) => TaskStatus.values.map((s) {
+            return PopupMenuItem<TaskStatus>(
+              value: s,
+              child: Row(
+                children: [
+                  Icon(_statusIcon(s),
+                      size: 18,
+                      color: _statusColor(s, Theme.of(ctx).colorScheme)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(_statusLabel(s))),
+                  if (s == task.status)
+                    Icon(Icons.check, size: 16, color: scheme.primary),
+                ],
+              ),
+            );
+          }).toList(),
+          child: _EditTile(
+            icon: _statusIcon(task.status),
+            iconColor: _statusColor(task.status, scheme),
+            label: '状态',
+            value: _statusLabel(task.status),
+            trailing: const Icon(Icons.unfold_more, size: 18),
           ),
         ),
-        // 优先级：PopupMenuButton 就地下拉
-        _EditTile(
-          icon: Icons.flag_outlined,
-          iconColor: _priorityColor(task.priority),
-          label: '优先级',
-          value: _priorityLabel(task.priority),
-          trailing: _PriorityPopup(
-            current: task.priority,
-            onSelected: _setPriority,
+        // 优先级：整行点击弹出下拉
+        PopupMenuButton<TaskPriority>(
+          onSelected: _setPriority,
+          itemBuilder: (ctx) => TaskPriority.values.map((p) {
+            return PopupMenuItem<TaskPriority>(
+              value: p,
+              child: Row(
+                children: [
+                  Icon(Icons.flag_outlined, size: 18, color: _priorityColor(p)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(_priorityLabel(p))),
+                  if (p == task.priority)
+                    Icon(Icons.check, size: 16, color: scheme.primary),
+                ],
+              ),
+            );
+          }).toList(),
+          child: _EditTile(
+            icon: Icons.flag_outlined,
+            iconColor: _priorityColor(task.priority),
+            label: '优先级',
+            value: _priorityLabel(task.priority),
+            trailing: const Icon(Icons.unfold_more, size: 18),
           ),
         ),
         // 进度：内联 Slider（点击展开）
@@ -506,7 +502,14 @@ class _DetailListState extends State<_DetailList> {
               ? '未设置'
               : _fmt.format(task.start!.toLocal()),
           valueColor: scheme.onSurface,
-          trailing: const Icon(Icons.chevron_right, size: 18),
+          trailing: task.start != null
+              ? IconButton(
+                  icon: const Icon(Icons.clear, size: 18),
+                  tooltip: '清除',
+                  onPressed: () =>
+                      widget.onUpdate((t) => t.copyWith(start: null)),
+                )
+              : const Icon(Icons.chevron_right, size: 18),
           onTap: () => _pickDateTime(
             '开始时间',
             task.start,
@@ -520,7 +523,14 @@ class _DetailListState extends State<_DetailList> {
               ? '未设置'
               : _fmt.format(task.due!.toLocal()),
           valueColor: task.isOverdue ? scheme.error : scheme.onSurface,
-          trailing: const Icon(Icons.chevron_right, size: 18),
+          trailing: task.due != null
+              ? IconButton(
+                  icon: const Icon(Icons.clear, size: 18),
+                  tooltip: '清除',
+                  onPressed: () =>
+                      widget.onUpdate((t) => t.copyWith(due: null)),
+                )
+              : const Icon(Icons.chevron_right, size: 18),
           onTap: () => _pickDateTime(
             '截止时间',
             task.due,
@@ -620,108 +630,6 @@ class _DetailListState extends State<_DetailList> {
         TaskStatus.inProcess => scheme.secondary,
         TaskStatus.completed => scheme.primary,
         TaskStatus.cancelled => scheme.outline,
-      };
-
-  static Color _priorityColor(TaskPriority p) => switch (p) {
-        TaskPriority.none => Colors.grey,
-        TaskPriority.high => Colors.red,
-        TaskPriority.medium => Colors.orange,
-        TaskPriority.low => Colors.blue,
-      };
-}
-
-/// 状态就地下拉菜单。
-class _StatusPopup extends StatelessWidget {
-  const _StatusPopup({required this.current, required this.onSelected});
-
-  final TaskStatus current;
-  final ValueChanged<TaskStatus> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return PopupMenuButton<TaskStatus>(
-      icon: const Icon(Icons.unfold_more, size: 18),
-      tooltip: '选择状态',
-      onSelected: onSelected,
-      itemBuilder: (ctx) => TaskStatus.values.map((s) {
-        return PopupMenuItem<TaskStatus>(
-          value: s,
-          child: Row(
-            children: [
-              Icon(_statusIcon(s),
-                  size: 18,
-                  color: _statusColor(s, Theme.of(ctx).colorScheme)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(_statusLabel(s))),
-              if (s == current)
-                Icon(Icons.check,
-                    size: 16, color: scheme.primary),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  static String _statusLabel(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => '未开始',
-        TaskStatus.inProcess => '进行中',
-        TaskStatus.completed => '已完成',
-        TaskStatus.cancelled => '已取消',
-      };
-
-  static IconData _statusIcon(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => Icons.radio_button_unchecked,
-        TaskStatus.inProcess => Icons.pending_actions,
-        TaskStatus.completed => Icons.check_circle,
-        TaskStatus.cancelled => Icons.cancel_outlined,
-      };
-
-  static Color _statusColor(TaskStatus s, ColorScheme scheme) => switch (s) {
-        TaskStatus.needsAction => scheme.outline,
-        TaskStatus.inProcess => scheme.secondary,
-        TaskStatus.completed => scheme.primary,
-        TaskStatus.cancelled => scheme.outline,
-      };
-}
-
-/// 优先级就地下拉菜单。
-class _PriorityPopup extends StatelessWidget {
-  const _PriorityPopup({required this.current, required this.onSelected});
-
-  final TaskPriority current;
-  final ValueChanged<TaskPriority> onSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return PopupMenuButton<TaskPriority>(
-      icon: const Icon(Icons.unfold_more, size: 18),
-      tooltip: '选择优先级',
-      onSelected: onSelected,
-      itemBuilder: (ctx) => TaskPriority.values.map((p) {
-        return PopupMenuItem<TaskPriority>(
-          value: p,
-          child: Row(
-            children: [
-              Icon(Icons.flag_outlined, size: 18, color: _priorityColor(p)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(_priorityLabel(p))),
-              if (p == current)
-                Icon(Icons.check, size: 16, color: scheme.primary),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  static String _priorityLabel(TaskPriority p) => switch (p) {
-        TaskPriority.none => '无',
-        TaskPriority.high => '高',
-        TaskPriority.medium => '中',
-        TaskPriority.low => '低',
       };
 
   static Color _priorityColor(TaskPriority p) => switch (p) {
