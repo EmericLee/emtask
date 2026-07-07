@@ -942,11 +942,13 @@ class _PercentEditorState extends State<_PercentEditor> {
                               ),
                             ),
                           ),
-                          Text(display > 0 ? '$display%' : '',
+                          Text(display > 0 ? '$display%' : '未开始',
                               style: theme.textTheme.labelMedium?.copyWith(
-                                color: display > 50
-                                    ? scheme.onPrimary
-                                    : scheme.onSurface,
+                                color: display == 0
+                                    ? scheme.outline
+                                    : (display > 50
+                                        ? scheme.onPrimary
+                                        : scheme.onSurface),
                               )),
                         ],
                       ),
@@ -1376,39 +1378,57 @@ class _EditTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final effectiveStyle = style ?? theme.textTheme.bodyMedium;
+    // 计算最小高度：minLines × 行高（fontSize × height）
+    final fontSize = effectiveStyle?.fontSize ?? 14.0;
+    final lineHeight = effectiveStyle?.height ?? 1.43;
+    final minHeight = (minLines ?? 1) * fontSize * lineHeight;
+    final multiLine = minLines != null && minLines! > 1;
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+          crossAxisAlignment: multiLine
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
           children: [
             Icon(icon, size: 18, color: iconColor ?? scheme.outline),
             const SizedBox(width: 10),
             SizedBox(
               width: 72,
-              child: Text(
-                label,
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: scheme.outline,
+              child: Padding(
+                padding: EdgeInsets.only(top: multiLine ? 2 : 0),
+                child: Text(
+                  label,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    color: scheme.outline,
+                  ),
                 ),
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                value,
-                maxLines: maxLines,
-                overflow: TextOverflow.ellipsis,
-                style: style ??
-                    theme.textTheme.bodyMedium?.copyWith(
-                      color: valueColor,
-                      fontFamily: mono ? 'monospace' : null,
-                    ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: minHeight),
+                child: Text(
+                  value,
+                  maxLines: maxLines,
+                  overflow: TextOverflow.ellipsis,
+                  style: effectiveStyle?.copyWith(
+                    color: valueColor,
+                    fontFamily: mono ? 'monospace' : null,
+                  ),
+                ),
               ),
             ),
-            if (trailing != null) trailing!,
+            if (trailing != null)
+              Padding(
+                padding: EdgeInsets.only(top: multiLine ? 2 : 0),
+                child: trailing,
+              ),
           ],
         ),
       ),

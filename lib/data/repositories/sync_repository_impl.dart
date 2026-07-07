@@ -77,15 +77,32 @@ class SyncRepositoryImpl implements SyncRepository {
         }
 
         final ical = IcalSerializer.serialize(task);
-        final taskHref = _taskHref(cal.url, task.uid);
+        // 优先使用已存储的 href（来自上次同步），没有时才按 uid 计算
+        final taskHref = task.href ?? _taskHref(cal.url, task.uid);
 
         if (task.etag == null) {
           AppLogger.instance.d(_tag, '新建任务: $taskHref');
-          final etag = await _client.createTask(
-            taskHref: taskHref,
-            icalData: ical,
-          );
-          await _tasks.markSynced(task, etag: etag, href: taskHref);
+          try {
+            final etag = await _client.createTask(
+              taskHref: taskHref,
+              icalData: ical,
+            );
+            await _tasks.markSynced(task, etag: etag, href: taskHref);
+          } on CalDavException catch (e) {
+            // 400 "uid already exists"：任务在远端已存在但 href 不同，
+            // 查找正确的 href 并更新
+            if (e.statusCode == 400 &&
+                (e.responseBody ?? '').contains('already exists')) {
+              AppLogger.instance.w(_tag,
+                  'UID已存在(400)，查找正确href: ${task.uid}');
+              final etag = await _findAndUpdateRemote(
+                cal.url, task.uid, ical, taskHref,
+              );
+              await _tasks.markSynced(task, etag: etag.value, href: etag.href);
+            } else {
+              rethrow;
+            }
+          }
         } else {
           AppLogger.instance.d(_tag, '更新任务: $taskHref');
           try {
@@ -96,16 +113,14 @@ class SyncRepositoryImpl implements SyncRepository {
             );
             await _tasks.markSynced(task, etag: etag, href: taskHref);
           } on CalDavException catch (e) {
-            // 412 PreconditionFailed：远端资源已不存在（被删除），
-            // 回退为新建（PUT 不带 If-Match）
             if (e.statusCode == 412) {
+              // 412：远端资源在此 href 不存在，可能 href 已变更或资源被删除
               AppLogger.instance.w(_tag,
-                  '远端资源不存在(412)，回退为新建: $taskHref');
-              final etag = await _client.createTask(
-                taskHref: taskHref,
-                icalData: ical,
+                  '远端资源不存在(412)，查找正确href: ${task.uid}');
+              final etag = await _findAndUpdateRemote(
+                cal.url, task.uid, ical, taskHref,
               );
-              await _tasks.markSynced(task, etag: etag, href: taskHref);
+              await _tasks.markSynced(task, etag: etag.value, href: etag.href);
             } else {
               rethrow;
             }
@@ -256,5 +271,46 @@ class SyncRepositoryImpl implements SyncRepository {
         ? calendarUrl
         : '$calendarUrl/';
     return '$base$uid.ics';
+  }
+
+  /// 在远端日历中按 UID 查找任务，找到则更新，找不到则新建。
+  ///
+  /// 用于 412/400 错误恢复：远端资源 href 可能与本地不一致。
+  /// 返回新的 etag 和实际使用的 href。
+  Future<({String value, String href})> _findAndUpdateRemote(
+    String calendarUrl,
+    String uid,
+    String icalData,
+    String fallbackHref,
+  ) async {
+    // 列出日历下所有 VTODO，按 UID 匹配
+    final remoteTasks = await _client.listVTodos(calendarUrl);
+    DavTaskResource? match;
+    for (final r in remoteTasks) {
+      if (r.icalData == null) continue;
+      // 在 iCalendar 数据中搜索 UID 行
+      if (r.icalData!.contains('UID:$uid')) {
+        match = r;
+        break;
+      }
+    }
+
+    if (match != null) {
+      AppLogger.instance.i(_tag, '找到远端任务，更新: ${match.href}');
+      final etag = await _client.updateTask(
+        taskHref: match.href,
+        icalData: icalData,
+        etag: match.etag ?? '*',
+      );
+      return (value: etag, href: match.href);
+    } else {
+      // 远端确实不存在，新建
+      AppLogger.instance.i(_tag, '远端未找到，新建: $fallbackHref');
+      final etag = await _client.createTask(
+        taskHref: fallbackHref,
+        icalData: icalData,
+      );
+      return (value: etag, href: fallbackHref);
+    }
   }
 }
