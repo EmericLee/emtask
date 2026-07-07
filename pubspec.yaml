@@ -1,7 +1,7 @@
 name: em_task
 description: "EM Task - 跨平台任务管理器，支持 CalDAV / Nextcloud Tasks 同步。"
 publish_to: 'none'
-version: 0.0.13+13
+version: 0.0.14+14
 
 environment:
   # sdk: ^3.11.0
