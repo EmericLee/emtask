@@ -142,10 +142,9 @@ class CalDavClient {
       headers: {'Content-Type': 'text/calendar; charset=utf-8'},
       body: icalData,
     );
-    final etag = resp.headers['etag'];
-    if (etag == null) {
-      throw CalDavException('创建任务后未返回 ETag', statusCode: resp.statusCode);
-    }
+    // 优先从响应头获取 ETag；部分服务器（如 Nextcloud 204）不返回 ETag 头，
+    // 回退到 PROPFIND 获取；仍获取失败则用 "*" 表示"资源存在时匹配"
+    final etag = resp.headers['etag'] ?? await _fetchEtag(taskHref);
     return etag;
   }
 
@@ -164,11 +163,35 @@ class CalDavClient {
       },
       body: icalData,
     );
-    final newEtag = resp.headers['etag'];
-    if (newEtag == null) {
-      throw CalDavException('更新任务后未返回 ETag', statusCode: resp.statusCode);
-    }
+    final newEtag = resp.headers['etag'] ?? await _fetchEtag(taskHref);
     return newEtag;
+  }
+
+  /// 通过 PROPFIND 获取单个资源的 ETag（PUT 响应未返回 ETag 时的后备方案）。
+  Future<String> _fetchEtag(String taskHref) async {
+    try {
+      final resp = await _send(
+        method: CalDavMethod.propfind,
+        path: taskHref,
+        headers: {'Depth': '0'},
+        body: '''<?xml version="1.0" encoding="UTF-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:getetag/>
+  </d:prop>
+</d:propfind>''',
+        contentType: 'application/xml; charset=utf-8',
+      );
+      final resources = _parseTaskMultistatus(resp.body);
+      if (resources.isNotEmpty && resources.first.etag != null) {
+        return resources.first.etag!;
+      }
+    } catch (e) {
+      AppLogger.instance.w(tag, 'PROPFIND 获取 ETag 失败: $e');
+    }
+    // 最终回退：* 表示"资源存在时匹配"
+    AppLogger.instance.w(tag, '使用 * 作为 ETag 回退');
+    return '*';
   }
 
   /// 删除任务。
