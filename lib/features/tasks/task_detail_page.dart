@@ -35,6 +35,8 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
 
   // 新建模式下的临时字段
   String? _newCalendarUrl;
+  // 所有任务已用过的标签集合（供标签编辑器检索）
+  List<String> _allTags = const [];
 
   @override
   void initState() {
@@ -71,9 +73,15 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
         (x) => x.localId == id,
         orElse: () => throw StateError('任务不存在'),
       );
+      // 汇总所有任务的标签，供标签编辑器检索
+      final tags = <String>{};
+      for (final x in all) {
+        tags.addAll(x.categories);
+      }
       if (!mounted) return;
       setState(() {
         _loaded = t;
+        _allTags = tags.toList()..sort();
         _loading = false;
       });
     } catch (e) {
@@ -188,6 +196,7 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
     return _DetailList(
       task: t,
       calendarsAsync: calendarsAsync,
+      allTags: _allTags,
       onUpdate: _update,
     );
   }
@@ -199,11 +208,13 @@ class _DetailList extends StatefulWidget {
   const _DetailList({
     required this.task,
     required this.calendarsAsync,
+    required this.allTags,
     required this.onUpdate,
   });
 
   final Task task;
   final AsyncValue<List<Calendar>> calendarsAsync;
+  final List<String> allTags;
   final Future<void> Function(Task Function(Task) updater) onUpdate;
 
   @override
@@ -215,9 +226,6 @@ class _DetailListState extends State<_DetailList> {
   bool _editingTitle = false;
   late final TextEditingController _titleCtrl;
   late final FocusNode _titleFocus;
-  // 状态/优先级菜单定位：挂在 value 内容区域上
-  final GlobalKey _statusValueKey = GlobalKey();
-  final GlobalKey _priorityValueKey = GlobalKey();
 
   @override
   void initState() {
@@ -283,85 +291,6 @@ class _DetailListState extends State<_DetailList> {
     await widget.onUpdate((t) => t.copyWith(priority: p));
   }
 
-  /// 弹出状态选择菜单（对齐 value 区域左侧，下方/上方弹出）。
-  Future<void> _showStatusMenu() async {
-    final selected = await _showMenuAt<TaskStatus>(
-      _statusValueKey,
-      (ctx) => TaskStatus.values.map((s) {
-        final scheme = Theme.of(ctx).colorScheme;
-        return PopupMenuItem<TaskStatus>(
-          value: s,
-          child: Row(
-            children: [
-              Icon(_statusIcon(s), size: 18, color: _statusColor(s, scheme)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(_statusLabel(s))),
-              if (s == widget.task.status)
-                Icon(Icons.check, size: 16, color: scheme.primary),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-    if (selected != null) await _setStatus(selected);
-  }
-
-  /// 弹出优先级选择菜单（对齐 value 区域左侧，下方/上方弹出）。
-  Future<void> _showPriorityMenu() async {
-    final selected = await _showMenuAt<TaskPriority>(
-      _priorityValueKey,
-      (ctx) => TaskPriority.values.map((p) {
-        final scheme = Theme.of(ctx).colorScheme;
-        return PopupMenuItem<TaskPriority>(
-          value: p,
-          child: Row(
-            children: [
-              Icon(Icons.flag_outlined, size: 18, color: _priorityColor(p)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(_priorityLabel(p))),
-              if (p == widget.task.priority)
-                Icon(Icons.check, size: 16, color: scheme.primary),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-    if (selected != null) await _setPriority(selected);
-  }
-
-  /// 通用菜单弹出：基于 [valueKey] 定位 value 内容区域左侧，紧贴下方/上方显示。
-  Future<T?> _showMenuAt<T>(
-    GlobalKey valueKey,
-    List<PopupMenuEntry<T>> Function(BuildContext) itemBuilder,
-  ) async {
-    final ctx = valueKey.currentContext;
-    if (ctx == null) return null;
-    final box = ctx.findRenderObject() as RenderBox;
-    final topLeft = box.localToGlobal(Offset.zero);
-    final size = box.size;
-    final media = MediaQuery.of(context);
-    const menuHeight = 240.0;
-    const menuWidth = 220.0;
-    // 下方空间不足则向上弹出
-    final showBelow =
-        topLeft.dy + size.height + menuHeight + 16 < media.size.height;
-    final top = showBelow ? topLeft.dy + size.height : topLeft.dy - menuHeight;
-    // 左对齐 value 区域左侧，但不超过屏幕右边
-    final left = topLeft.dx
-        .clamp(0.0, math.max(0.0, media.size.width - menuWidth))
-        .toDouble();
-    return showMenu<T>(
-      context: context,
-      position: RelativeRect.fromLTRB(
-        left,
-        top,
-        media.size.width - left - menuWidth,
-        0,
-      ),
-      items: itemBuilder(context),
-    );
-  }
-
   Future<void> _setPercent(int p) async {
     TaskStatus status = widget.task.status;
     DateTime? completed = widget.task.completed;
@@ -380,71 +309,6 @@ class _DetailListState extends State<_DetailList> {
           status: status,
           completed: completed,
         ));
-  }
-
-  Future<void> _editDescription() async {
-    final ctrl = TextEditingController(text: widget.task.description);
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('编辑描述'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          maxLines: 8,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    if (result == null) return;
-    await widget.onUpdate((t) => t.copyWith(description: result));
-  }
-
-  Future<void> _editCategories() async {
-    final ctrl =
-        TextEditingController(text: widget.task.categories.join(', '));
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('编辑标签'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: '标签（用逗号分隔）',
-            helperText: '如：工作, 重要, 项目A',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('保存'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    if (result == null) return;
-    final list = result
-        .split(',')
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-    await widget.onUpdate((t) => t.copyWith(categories: list));
   }
 
   @override
@@ -494,19 +358,10 @@ class _DetailListState extends State<_DetailList> {
             },
           ),
         const _Divider(),
-        // 描述
-        _EditTile(
-          icon: Icons.notes,
-          label: '描述',
-          value: task.description.trim().isEmpty
-              ? '点击添加描述'
-              : task.description,
-          valueColor: task.description.trim().isEmpty
-              ? scheme.outline
-              : scheme.onSurface,
-          maxLines: 4,
-          trailing: const Icon(Icons.edit_outlined, size: 18),
-          onTap: _editDescription,
+        // 描述：点击内联展开多行编辑
+        _DescriptionField(
+          description: task.description,
+          onChanged: (v) => widget.onUpdate((t) => t.copyWith(description: v)),
         ),
         const _Divider(),
         // 时间信息：开始 / 截止 / 完成
@@ -531,50 +386,95 @@ class _DetailListState extends State<_DetailList> {
           onSaved: (v) => widget.onUpdate((t) => t.copyWith(completed: v)),
         ),
         const _Divider(),
-        // 状态：整行点击，菜单对齐 value 区域左侧下方/上方弹出
-        _EditTile(
+        // 状态：下拉选择控件
+        _DropdownField<TaskStatus>(
           icon: _statusIcon(task.status),
           iconColor: _statusColor(task.status, scheme),
           label: '状态',
-          value: _statusLabel(task.status),
-          valueKey: _statusValueKey,
-          trailing: const Icon(Icons.unfold_more, size: 18),
-          onTap: _showStatusMenu,
+          value: task.status,
+          onChanged: _setStatus,
+          options: TaskStatus.values
+              .map((s) => _DropdownOption(
+                    value: s,
+                    label: _statusLabel(s),
+                    icon: _statusIcon(s),
+                    color: _statusColor(s, scheme),
+                  ))
+              .toList(),
         ),
         // 进度：内联 Slider（点击展开）
         _PercentEditor(
           task: task,
           onUpdate: _setPercent,
         ),
-        // 优先级：整行点击，菜单对齐 value 区域左侧下方/上方弹出
-        _EditTile(
+        // 优先级：下拉选择控件
+        _DropdownField<TaskPriority>(
           icon: Icons.flag_outlined,
           iconColor: _priorityColor(task.priority),
           label: '优先级',
-          value: _priorityLabel(task.priority),
-          valueKey: _priorityValueKey,
-          trailing: const Icon(Icons.unfold_more, size: 18),
-          onTap: _showPriorityMenu,
+          value: task.priority,
+          onChanged: _setPriority,
+          options: TaskPriority.values
+              .map((p) => _DropdownOption(
+                    value: p,
+                    label: _priorityLabel(p),
+                    icon: Icons.flag_outlined,
+                    color: _priorityColor(p),
+                  ))
+              .toList(),
         ),
         const _Divider(),
-        // 分类标签
-        _EditTile(
-          icon: Icons.label_outline,
-          label: '标签',
-          value: task.categories.isEmpty
-              ? '点击添加标签'
-              : task.categories.join('，'),
-          valueColor: task.categories.isEmpty
-              ? scheme.outline
-              : scheme.onSurface,
-          trailing: const Icon(Icons.edit_outlined, size: 18),
-          onTap: _editCategories,
+        // 标签：内联 InputChip 编辑
+        _TagEditor(
+          tags: task.categories,
+          allTags: widget.allTags,
+          onChanged: (list) =>
+              widget.onUpdate((t) => t.copyWith(categories: list)),
         ),
         const _Divider(),
-        // 所属日历
-        _CalendarTile(
-          task: task,
-          calendarsAsync: widget.calendarsAsync,
+        // 所属日历：下拉选择可切换日历
+        widget.calendarsAsync.when(
+          data: (list) {
+            final current = list.firstWhere(
+              (c) => c.url == task.calendarUrl,
+              orElse: () => Calendar(
+                localId: 0,
+                url: task.calendarUrl,
+                displayName: task.calendarUrl,
+                color: '',
+                supportsTasks: true,
+                supportsEvents: false,
+                owner: '',
+                syncEnabled: true,
+              ),
+            );
+            return _DropdownField<String>(
+              icon: Icons.calendar_today_outlined,
+              iconColor: _parseCalendarColor(current.color),
+              label: '所属清单',
+              value: task.calendarUrl,
+              onChanged: (url) =>
+                  widget.onUpdate((t) => t.copyWith(calendarUrl: url)),
+              options: list
+                  .where((c) => c.supportsTasks)
+                  .map((c) => _DropdownOption(
+                        value: c.url,
+                        label: c.displayName,
+                        icon: Icons.calendar_today_outlined,
+                        color: _parseCalendarColor(c.color),
+                      ))
+                  .toList(),
+            );
+          },
+          loading: () => const Padding(
+            padding: EdgeInsets.symmetric(vertical: 12),
+            child: Center(child: LinearProgressIndicator()),
+          ),
+          error: (_, _) => _EditTile(
+            icon: Icons.calendar_today_outlined,
+            label: '所属清单',
+            value: task.calendarUrl,
+          ),
         ),
         // 父任务
         if (task.parentUid != null && task.parentUid!.isNotEmpty) ...[
@@ -662,25 +562,63 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final showTime = ref.watch(showTimeInDateFieldProvider);
     final fmt = showTime ? _fmtDateTime : _fmtDate;
-    return _EditTile(
+    final value = widget.value == null
+        ? '未设置'
+        : fmt.format(widget.value!.toLocal());
+    return Padding(
       key: _tileKey,
-      icon: widget.icon,
-      label: widget.label,
-      value: widget.value == null
-          ? '未设置'
-          : fmt.format(widget.value!.toLocal()),
-      valueColor: widget.valueColor ?? scheme.onSurface,
-      trailing: widget.value != null
-          ? IconButton(
-              icon: const Icon(Icons.clear, size: 18),
-              tooltip: '清除',
-              onPressed: () => widget.onSaved(null),
-            )
-          : const Icon(Icons.chevron_right, size: 18),
-      onTap: _openPopover,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(widget.icon, size: 18, color: scheme.outline),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 72,
+            child: Text(widget.label,
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(color: scheme.outline)),
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: InkWell(
+              onTap: _openPopover,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        value,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: widget.valueColor ?? scheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    if (widget.value != null)
+                      GestureDetector(
+                        onTap: () => widget.onSaved(null),
+                        child: Icon(Icons.clear,
+                            size: 16, color: scheme.outline),
+                      )
+                    else
+                      Icon(Icons.chevron_right,
+                          size: 18, color: scheme.outline),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -930,66 +868,475 @@ class _PercentEditor extends StatefulWidget {
 }
 
 class _PercentEditorState extends State<_PercentEditor> {
-  bool _expanded = false;
-  int? _draggingValue;
+  bool _editing = false;
+  int _draggingValue = 0;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final display = _draggingValue ?? widget.task.percent;
-    return Column(
-      children: [
-        _EditTile(
-          icon: Icons.percent_outlined,
-          label: '完成进度',
-          value: '$display%',
-          trailing: SizedBox(
-            width: 80,
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: display / 100,
-                minHeight: 6,
+    final scheme = theme.colorScheme;
+    final display = _editing ? _draggingValue : widget.task.percent;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(Icons.percent_outlined, size: 18, color: scheme.outline),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 72,
+            child: Text('完成进度',
+                style: theme.textTheme.labelMedium
+                    ?.copyWith(color: scheme.outline)),
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: _editing
+                ? Row(
+                    children: [
+                      Expanded(
+                        child: Slider(
+                          value: display.toDouble(),
+                          min: 0,
+                          max: 100,
+                          divisions: 20,
+                          onChanged: (v) =>
+                              setState(() => _draggingValue = v.round()),
+                          onChangeEnd: (v) {
+                            widget.onUpdate(v.round());
+                            setState(() => _editing = false);
+                          },
+                        ),
+                      ),
+                      SizedBox(
+                          width: 36,
+                          child: Text('$display%',
+                              style: theme.textTheme.labelSmall)),
+                    ],
+                  )
+                : GestureDetector(
+                    onTap: () => setState(() {
+                      _editing = true;
+                      _draggingValue = widget.task.percent;
+                    }),
+                    child: Container(
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: FractionallySizedBox(
+                              widthFactor: display / 100,
+                              child: Container(
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: scheme.primary,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Text(display > 0 ? '$display%' : '',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: display > 50
+                                    ? scheme.onPrimary
+                                    : scheme.onSurface,
+                              )),
+                        ],
+                      ),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ==================== 描述字段（内联展开编辑） ====================
+
+/// 描述字段：点击展开多行 TextField，失焦或点保存提交。
+class _DescriptionField extends StatefulWidget {
+  const _DescriptionField({required this.description, required this.onChanged});
+
+  final String description;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_DescriptionField> createState() => _DescriptionFieldState();
+}
+
+class _DescriptionFieldState extends State<_DescriptionField> {
+  bool _editing = false;
+  late TextEditingController _ctrl;
+  late FocusNode _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.description);
+    _focus = FocusNode();
+    _focus.addListener(_onFocusChange);
+  }
+
+  @override
+  void didUpdateWidget(_DescriptionField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_editing && widget.description != oldWidget.description) {
+      _ctrl.text = widget.description;
+    }
+  }
+
+  void _onFocusChange() {
+    if (!_focus.hasFocus && _editing) _commit();
+  }
+
+  void _startEdit() {
+    _ctrl.text = widget.description;
+    setState(() => _editing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _focus.requestFocus());
+  }
+
+  void _commit() {
+    final v = _ctrl.text.trim();
+    if (v != widget.description) widget.onChanged(v);
+    setState(() => _editing = false);
+  }
+
+  @override
+  void dispose() {
+    _focus.removeListener(_onFocusChange);
+    _focus.dispose();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    if (_editing) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.notes, size: 18, color: scheme.outline),
+            const SizedBox(width: 10),
+            SizedBox(
+                width: 72,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('描述',
+                      style: theme.textTheme.labelMedium
+                          ?.copyWith(color: scheme.outline)),
+                )),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _ctrl,
+                    focusNode: _focus,
+                    maxLines: 5,
+                    minLines: 3,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                          onPressed: () => setState(() => _editing = false),
+                          child: const Text('取消')),
+                      FilledButton(
+                          onPressed: _commit, child: const Text('保存')),
+                    ],
+                  ),
+                ],
               ),
             ),
-          ),
-          onTap: () => setState(() {
-            _expanded = !_expanded;
-            _draggingValue = null;
-          }),
+          ],
         ),
-        if (_expanded)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: Row(
+      );
+    }
+    final empty = widget.description.trim().isEmpty;
+    return _EditTile(
+      icon: Icons.notes,
+      label: '描述',
+      value: empty ? '点击添加描述' : widget.description,
+      valueColor: empty ? scheme.outline : scheme.onSurface,
+      maxLines: 2,
+      minLines: 2,
+      trailing: const Icon(Icons.edit_outlined, size: 18),
+      onTap: _startEdit,
+    );
+  }
+}
+
+// ==================== 标签编辑器（输入 + 选择） ====================
+
+/// 标签字段：InputChip 展示已有标签，输入框支持检索已知标签或输入新标签。
+class _TagEditor extends StatefulWidget {
+  const _TagEditor({
+    required this.tags,
+    required this.allTags,
+    required this.onChanged,
+  });
+
+  final List<String> tags;
+  final List<String> allTags;
+  final ValueChanged<List<String>> onChanged;
+
+  @override
+  State<_TagEditor> createState() => _TagEditorState();
+}
+
+class _TagEditorState extends State<_TagEditor> {
+  final _ctrl = TextEditingController();
+  final _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _addTag(String v) {
+    v = v.trim();
+    if (v.isEmpty) return;
+    if (!widget.tags.contains(v)) {
+      widget.onChanged([...widget.tags, v]);
+    }
+    _ctrl.clear();
+    _focus.requestFocus();
+  }
+
+  void _removeTag(String tag) {
+    widget.onChanged(widget.tags.where((t) => t != tag).toList());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.label_outline, size: 18, color: scheme.outline),
+          const SizedBox(width: 10),
+          SizedBox(
+              width: 72,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text('标签',
+                    style: theme.textTheme.labelMedium
+                        ?.copyWith(color: scheme.outline)),
+              )),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('0%', style: theme.textTheme.labelSmall),
-                Expanded(
-                  child: Slider(
-                    value: display.toDouble(),
-                    min: 0,
-                    max: 100,
-                    divisions: 20,
-                    label: '$display%',
-                    onChanged: (v) =>
-                        setState(() => _draggingValue = v.round()),
-                    onChangeEnd: (v) {
-                      widget.onUpdate(v.round());
-                      if (mounted) setState(() => _draggingValue = null);
-                    },
+                if (widget.tags.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: widget.tags
+                          .map((tag) => InputChip(
+                                label: Text(tag),
+                                onDeleted: () => _removeTag(tag),
+                                deleteIconColor: scheme.outline,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                              ))
+                          .toList(),
+                    ),
                   ),
-                ),
-                Text('100%', style: theme.textTheme.labelSmall),
-                IconButton(
-                  tooltip: '收起',
-                  icon: const Icon(Icons.expand_less, size: 18),
-                  onPressed: () =>
-                      setState(() {_expanded = false; _draggingValue = null;}),
+                RawAutocomplete<String>(
+                  textEditingController: _ctrl,
+                  focusNode: _focus,
+                  optionsBuilder: (textEditingValue) {
+                    final v = textEditingValue.text.trim().toLowerCase();
+                    // 空输入时显示全部已知标签（排除已添加的）
+                    final base = widget.allTags
+                        .where((t) => !widget.tags.contains(t));
+                    if (v.isEmpty) return base.take(10);
+                    return base
+                        .where((t) => t.toLowerCase().contains(v))
+                        .take(10);
+                  },
+                  onSelected: _addTag,
+                  fieldViewBuilder:
+                      (ctx, controller, focusNode, onFieldSubmitted) {
+                    return TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      decoration: InputDecoration(
+                        hintText: '输入或选择标签',
+                        isDense: true,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide:
+                              BorderSide(color: scheme.outlineVariant),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 8),
+                      ),
+                      onSubmitted: (v) {
+                        _addTag(v);
+                        onFieldSubmitted();
+                      },
+                    );
+                  },
+                  optionsViewBuilder: (ctx, onSelected, options) {
+                    return Align(
+                      alignment: Alignment.topLeft,
+                      child: Material(
+                        elevation: 8,
+                        borderRadius: BorderRadius.circular(8),
+                        color: scheme.surface,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 240),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: options.length,
+                            itemBuilder: (_, i) {
+                              final opt = options.elementAt(i);
+                              return ListTile(
+                                dense: true,
+                                title: Text(opt),
+                                onTap: () => onSelected(opt),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),
           ),
-      ],
+        ],
+      ),
+    );
+  }
+}
+
+// ==================== 下拉选择字段（类 web select） ====================
+
+/// 下拉选项数据。
+class _DropdownOption<T> {
+  const _DropdownOption({
+    required this.value,
+    required this.label,
+    this.icon,
+    this.color,
+  });
+
+  final T value;
+  final String label;
+  final IconData? icon;
+  final Color? color;
+}
+
+/// 下拉选择字段：当前值显示在带边框的"选择框"中，点击展开菜单。
+///
+/// 视觉参照 web `<select>` 控件，使用 Material 3 的 [DropdownMenu] 实现，
+/// 自带边框、下拉箭头、hover/focus 高亮。
+class _DropdownField<T> extends StatelessWidget {
+  const _DropdownField({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.iconColor,
+  });
+
+  final IconData icon;
+  final String label;
+  final T value;
+  final List<_DropdownOption<T>> options;
+  final ValueChanged<T> onChanged;
+  final Color? iconColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Icon(icon, size: 18, color: iconColor ?? scheme.outline),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: theme.textTheme.labelMedium
+                  ?.copyWith(color: scheme.outline),
+            ),
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Theme(
+              data: theme.copyWith(
+                inputDecorationTheme: const InputDecorationTheme(
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 4),
+                ),
+              ),
+              child: DropdownMenu<T>(
+                initialSelection: value,
+                expandedInsets: EdgeInsets.zero,
+                enableSearch: false,
+                requestFocusOnTap: false,
+                onSelected: (v) {
+                  if (v != null) onChanged(v);
+                },
+                dropdownMenuEntries: options
+                    .map((o) => DropdownMenuEntry<T>(
+                          value: o.value,
+                          label: o.label,
+                          leadingIcon: o.icon != null
+                              ? Icon(o.icon,
+                                  size: 18, color: o.color ?? scheme.outline)
+                              : null,
+                          trailingIcon: o.value == value
+                              ? Icon(Icons.check,
+                                  size: 16, color: scheme.primary)
+                              : null,
+                        ))
+                    .toList(),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -998,6 +1345,7 @@ class _PercentEditorState extends State<_PercentEditor> {
 
 class _EditTile extends StatelessWidget {
   const _EditTile({
+    // ignore: unused_element_parameter
     super.key,
     required this.icon,
     required this.label,
@@ -1008,8 +1356,8 @@ class _EditTile extends StatelessWidget {
     this.trailing,
     this.style,
     this.maxLines = 1,
+    this.minLines,
     this.mono = false,
-    this.valueKey,
   });
 
   final IconData icon;
@@ -1021,9 +1369,8 @@ class _EditTile extends StatelessWidget {
   final Widget? trailing;
   final TextStyle? style;
   final int maxLines;
+  final int? minLines;
   final bool mono;
-  /// 用于定位 value 内容区域（供弹出菜单对齐用）。
-  final GlobalKey? valueKey;
 
   @override
   Widget build(BuildContext context) {
@@ -1052,7 +1399,6 @@ class _EditTile extends StatelessWidget {
             Expanded(
               child: Text(
                 value,
-                key: valueKey,
                 maxLines: maxLines,
                 overflow: TextOverflow.ellipsis,
                 style: style ??
@@ -1070,57 +1416,15 @@ class _EditTile extends StatelessWidget {
   }
 }
 
-class _CalendarTile extends StatelessWidget {
-  const _CalendarTile({required this.task, required this.calendarsAsync});
-
-  final Task task;
-  final AsyncValue<List<Calendar>> calendarsAsync;
-
-  @override
-  Widget build(BuildContext context) {
-    return calendarsAsync.when(
-      data: (list) {
-        final cal = list.firstWhere(
-          (c) => c.url == task.calendarUrl,
-          orElse: () => Calendar(
-            localId: 0,
-            url: task.calendarUrl,
-            displayName: task.calendarUrl,
-            color: '',
-            supportsTasks: true,
-            supportsEvents: false,
-            owner: '',
-            syncEnabled: true,
-          ),
-        );
-        return _EditTile(
-          icon: Icons.calendar_today_outlined,
-          iconColor: _parseColor(cal.color),
-          label: '所属清单',
-          value: cal.displayName,
-        );
-      },
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 12),
-        child: Center(child: LinearProgressIndicator()),
-      ),
-      error: (_, _) => _EditTile(
-        icon: Icons.calendar_today_outlined,
-        label: '所属清单',
-        value: task.calendarUrl,
-      ),
-    );
-  }
-
-  Color? _parseColor(String? hex) {
-    if (hex == null || hex.isEmpty) return null;
-    try {
-      var h = hex.replaceAll('#', '');
-      if (h.length == 6) h = 'FF$h';
-      return Color(int.parse(h, radix: 16));
-    } catch (_) {
-      return null;
-    }
+/// 解析日历颜色（hex 字符串 → Color）。
+Color? _parseCalendarColor(String? hex) {
+  if (hex == null || hex.isEmpty) return null;
+  try {
+    var h = hex.replaceAll('#', '');
+    if (h.length == 6) h = 'FF$h';
+    return Color(int.parse(h, radix: 16));
+  } catch (_) {
+    return null;
   }
 }
 

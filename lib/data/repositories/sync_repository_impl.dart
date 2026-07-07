@@ -29,6 +29,16 @@ class SyncRepositoryImpl implements SyncRepository {
     AppLogger.instance.i(_tag, '==== 开始完整同步 ====');
     try {
       final pushResult = await push();
+      // push 失败时停止同步，继续 pull 会用远端数据覆盖本地修改
+      if (pushResult.error != null) {
+        AppLogger.instance.e(_tag, 'push 失败，中止同步（不执行 pull）');
+        return SyncResult(
+          uploaded: pushResult.uploaded,
+          deleted: pushResult.deleted,
+          error: pushResult.error,
+          finishedAt: DateTime.now().toUtc(),
+        );
+      }
       final pullResult = await pull();
       final r = SyncResult(
         uploaded: pushResult.uploaded,
@@ -78,12 +88,28 @@ class SyncRepositoryImpl implements SyncRepository {
           await _tasks.markSynced(task, etag: etag, href: taskHref);
         } else {
           AppLogger.instance.d(_tag, '更新任务: $taskHref');
-          final etag = await _client.updateTask(
-            taskHref: taskHref,
-            icalData: ical,
-            etag: task.etag!,
-          );
-          await _tasks.markSynced(task, etag: etag, href: taskHref);
+          try {
+            final etag = await _client.updateTask(
+              taskHref: taskHref,
+              icalData: ical,
+              etag: task.etag!,
+            );
+            await _tasks.markSynced(task, etag: etag, href: taskHref);
+          } on CalDavException catch (e) {
+            // 412 PreconditionFailed：远端资源已不存在（被删除），
+            // 回退为新建（PUT 不带 If-Match）
+            if (e.statusCode == 412) {
+              AppLogger.instance.w(_tag,
+                  '远端资源不存在(412)，回退为新建: $taskHref');
+              final etag = await _client.createTask(
+                taskHref: taskHref,
+                icalData: ical,
+              );
+              await _tasks.markSynced(task, etag: etag, href: taskHref);
+            } else {
+              rethrow;
+            }
+          }
         }
         uploaded++;
       }

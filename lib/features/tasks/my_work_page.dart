@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
+import '../sync/sync_providers.dart';
 import 'task_list_pdf.dart';
 import 'task_providers.dart';
 
@@ -57,6 +58,9 @@ final _calendarColorMapProvider = FutureProvider<Map<String, Color>>((ref) async
 /// 当前选中的标签过滤（'__all__' 表示不过滤）。
 final _selectedTagProvider = StateProvider<String?>((ref) => '__all__');
 
+/// 当前选中的清单过滤（null 表示不过滤）。
+final _selectedCalendarProvider = StateProvider<String?>((ref) => null);
+
 /// 当前过滤条件下可用的标签集合（派生自任务列表与隐藏时长，自动重算）。
 final _availableTagsProvider = Provider<Set<String>>((ref) {
   final tasksAsync = ref.watch(taskListProvider);
@@ -90,9 +94,39 @@ class MyWorkPage extends ConsumerWidget {
     final hideHours = ref.watch(_hideCompletedHoursProvider);
     final sortMode = ref.watch(_currentSortModeProvider);
     final selectedTag = ref.watch(_selectedTagProvider);
+    final selectedCalendar = ref.watch(_selectedCalendarProvider);
     final debugSort = ref.watch(_debugSortOrderProvider);
     final availableTags = ref.watch(_availableTagsProvider);
     final orphanMode = ref.watch(orphanDisplayModeProvider);
+    final syncState = ref.watch(syncControllerProvider);
+    final pendingCount = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
+
+    // 执行同步并显示结果提示
+    Future<void> doSync() async {
+      final result = await ref.read(syncControllerProvider.notifier).sync();
+      if (!context.mounted) return;
+      if (result.error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('同步失败：${result.error}'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      } else {
+        final parts = <String>[];
+        if (result.uploaded > 0) parts.add('↑${result.uploaded}');
+        if (result.downloaded > 0) parts.add('↓${result.downloaded}');
+        if (result.deleted > 0) parts.add('✗${result.deleted}');
+        final msg = parts.isEmpty ? '同步完成，无变更' : '同步完成 ${parts.join(' ')}';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
 
     // 准备 PDF 数据：复用当前过滤、排序、分组逻辑。
     // 返回 null 表示无可打印任务（已弹出提示）。
@@ -116,13 +150,19 @@ class MyWorkPage extends ConsumerWidget {
       final orphanModeNow = ref.read(orphanDisplayModeProvider);
 
       final visibleTasks = _applyFilters(tasks, hideHours: hideHoursNow);
+      final selectedCalendarNow = ref.read(_selectedCalendarProvider);
+      final pdfTasks = selectedCalendarNow != null
+          ? visibleTasks
+              .where((t) => t.calendarUrl == selectedCalendarNow)
+              .toList()
+          : visibleTasks;
       final isTagFiltered =
           selectedTagNow != null && selectedTagNow != '__all__';
       final matchedTasks = isTagFiltered
-          ? visibleTasks
+          ? pdfTasks
               .where((t) => t.categories.contains(selectedTagNow))
               .toList()
-          : visibleTasks;
+          : pdfTasks;
       final displayTasks = isTagFiltered &&
               orphanModeNow == OrphanDisplayMode.tree
           ? _withAncestors(matchedTasks, allTasks: visibleTasks)
@@ -205,7 +245,10 @@ class MyWorkPage extends ConsumerWidget {
     }
 
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
+        backgroundColor: Colors.white,
+        scrolledUnderElevation: 0,
         title: const Row(
           children: [
             Icon(
@@ -217,6 +260,13 @@ class MyWorkPage extends ConsumerWidget {
           ],
         ),
         actions: [
+          // 按清单过滤
+          _CalendarFilterMenu(
+            calendarsAsync: calendarNamesAsync,
+            selected: selectedCalendar,
+            onSelected: (url) =>
+                ref.read(_selectedCalendarProvider.notifier).state = url,
+          ),
           // 排序方式切换
           _SortModeMenu(
             current: sortMode,
@@ -248,6 +298,12 @@ class MyWorkPage extends ConsumerWidget {
             icon: const Icon(Icons.download_outlined),
             onPressed: onExportPdf,
           ),
+          // 同步按钮：未同步时高亮+角标
+          _SyncButton(
+            running: syncState.running,
+            pendingCount: pendingCount,
+            onPressed: doSync,
+          ),
         ],
       ),
       body: tasksAsync.when(
@@ -260,7 +316,13 @@ class MyWorkPage extends ConsumerWidget {
         data: (tasks) {
           final calendarNames = calendarNamesAsync.valueOrNull ?? {};
           final calendarColors = calendarColorsAsync.valueOrNull ?? {};
-          final visibleTasks = _applyFilters(tasks, hideHours: hideHours);
+          var visibleTasks = _applyFilters(tasks, hideHours: hideHours);
+          // 按清单过滤
+          if (selectedCalendar != null) {
+            visibleTasks = visibleTasks
+                .where((t) => t.calendarUrl == selectedCalendar)
+                .toList();
+          }
           // 标签集合由 _availableTagsProvider 派生计算，此处无需写入。
           final isTagFiltered =
               selectedTag != null && selectedTag != '__all__';
@@ -511,6 +573,70 @@ class _HideHoursMenu extends StatelessWidget {
   }
 }
 
+/// 按清单（日历）过滤下拉菜单。
+class _CalendarFilterMenu extends StatelessWidget {
+  const _CalendarFilterMenu({
+    required this.calendarsAsync,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final AsyncValue<Map<String, String>> calendarsAsync;
+  final String? selected;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final map = calendarsAsync.valueOrNull ?? {};
+    final isAll = selected == null;
+    final selectedName = isAll ? null : (map[selected] ?? selected);
+
+    final items = <PopupMenuEntry<String?>>[
+      const PopupMenuItem<String?>(
+        value: null,
+        child: Text('全部清单'),
+      ),
+      if (map.isNotEmpty) const PopupMenuDivider(),
+      ...map.entries.map((e) => PopupMenuItem<String?>(
+            value: e.key,
+            child: Text(e.value),
+          )),
+    ];
+
+    return PopupMenuButton<String?>(
+      tooltip: '按清单过滤',
+      initialValue: selected,
+      onSelected: onSelected,
+      itemBuilder: (context) => items,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.filter_list_outlined,
+              size: 20,
+              color: isAll
+                  ? theme.colorScheme.outline
+                  : theme.colorScheme.primary,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              isAll ? '清单' : selectedName!,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: isAll
+                    ? theme.colorScheme.outline
+                    : theme.colorScheme.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// 标签快速过滤下拉菜单。
 class _TagFilterMenu extends StatelessWidget {
   const _TagFilterMenu({
@@ -564,6 +690,71 @@ class _TagFilterMenu extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 同步按钮：未同步数据时高亮，并显示角标。
+class _SyncButton extends StatelessWidget {
+  const _SyncButton({
+    required this.running,
+    required this.pendingCount,
+    required this.onPressed,
+  });
+
+  final bool running;
+  final int pendingCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final hasPending = pendingCount > 0;
+    final color = hasPending ? scheme.primary : scheme.outline;
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        IconButton(
+          tooltip: hasPending ? '同步（$pendingCount 项待同步）' : '同步',
+          icon: running
+              ? SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(color),
+                  ),
+                )
+              : Icon(Icons.sync, color: color),
+          onPressed: running ? null : onPressed,
+        ),
+        if (hasPending && !running)
+          Positioned(
+            right: 4,
+            top: 4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              constraints: const BoxConstraints(minWidth: 14),
+              decoration: BoxDecoration(
+                color: scheme.error,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.white, width: 1.5),
+              ),
+              child: Text(
+                pendingCount > 99 ? '99+' : '$pendingCount',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onError,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -662,7 +853,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       },
       child: ListView.builder(
         controller: _scrollCtrl,
-        padding: const EdgeInsets.only(bottom: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0).copyWith(bottom: 24),
         itemCount: entries.length,
         itemBuilder: (context, index) {
         final category = entries[index].key;
@@ -844,9 +1035,20 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
         child: InkWell(
           onTap: () => _showDetail(context),
           child: Container(
-            color: _hovering
-                ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
-                : Colors.white,
+            decoration: BoxDecoration(
+              color: _hovering
+                  ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
+                  : Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  // 向左下角投影，效果细微
+                  offset: const Offset(-1.5, 1.5),
+                  blurRadius: 2,
+                  spreadRadius: 0,
+                  color: Colors.black.withValues(alpha: 0.04),
+                ),
+              ],
+            ),
             child: Column(
               children: [
                 Padding(
@@ -997,10 +1199,11 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                             : Icons.radio_button_unchecked,
                         color: widget.task.isCompleted
                             ? scheme.primary
-                            : scheme.outline,
+                            : scheme.outlineVariant,
                         onPressed: () => _toggleCompletion(ref),
                       ),
                     ),
+                    const SizedBox(width: 5),
                     // 优先级：点击弹出选择菜单（替换原星标位置）
                     PopupMenuButton<TaskPriority>(
                       onSelected: (p) => _setPriority(ref, p),
@@ -1033,7 +1236,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                           Icons.flag_outlined,
                           size: 20,
                           color: widget.task.priority == TaskPriority.none
-                              ? scheme.outline
+                              ? scheme.outlineVariant
                               : _priorityColor(widget.task.priority),
                         ),
                       ),

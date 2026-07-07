@@ -33,36 +33,57 @@ class SyncNotifier extends Notifier<SyncState> {
   @override
   SyncState build() => const SyncState();
 
-  Future<void> sync() async {
+  Future<SyncResult> sync() async {
     state = state.copyWith(running: true, error: null);
     try {
       final syncRepo = ref.read(syncRepositoryProvider);
       final result = await syncRepo.sync();
-      state = state.copyWith(running: false, lastResult: result);
+      state = state.copyWith(
+        running: false,
+        lastResult: result,
+        error: result.error?.toString(),
+      );
+      return result;
     } catch (e) {
       state = state.copyWith(running: false, error: e.toString());
+      final result = SyncResult(error: e, finishedAt: DateTime.now().toUtc());
+      return result;
     }
   }
 
-  Future<void> pushOnly() async {
+  Future<SyncResult> pushOnly() async {
     state = state.copyWith(running: true, error: null);
     try {
       final syncRepo = ref.read(syncRepositoryProvider);
       final result = await syncRepo.push();
-      state = state.copyWith(running: false, lastResult: result);
+      state = state.copyWith(
+        running: false,
+        lastResult: result,
+        error: result.error?.toString(),
+      );
+      return result;
     } catch (e) {
       state = state.copyWith(running: false, error: e.toString());
+      final result = SyncResult(error: e, finishedAt: DateTime.now().toUtc());
+      return result;
     }
   }
 
-  Future<void> pullOnly() async {
+  Future<SyncResult> pullOnly() async {
     state = state.copyWith(running: true, error: null);
     try {
       final syncRepo = ref.read(syncRepositoryProvider);
       final result = await syncRepo.pull();
-      state = state.copyWith(running: false, lastResult: result);
+      state = state.copyWith(
+        running: false,
+        lastResult: result,
+        error: result.error?.toString(),
+      );
+      return result;
     } catch (e) {
       state = state.copyWith(running: false, error: e.toString());
+      final result = SyncResult(error: e, finishedAt: DateTime.now().toUtc());
+      return result;
     }
   }
 }
@@ -77,10 +98,8 @@ final calendarListProvider = StreamProvider<List<Calendar>>((ref) {
   return repo.watchAll();
 });
 
-/// 当前 dirty 任务数（用于显示待同步数量）。
-final pendingSyncCountProvider = FutureProvider<int>((ref) async {
+/// 当前待同步任务数（响应式，dirty 或 deleted 任务总数）。
+final pendingSyncCountProvider = StreamProvider<int>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  final dirty = await db.getDirtyTasks();
-  final deleted = await db.getDeletedTasks();
-  return dirty.length + deleted.length;
+  return db.watchDirtyTaskCount();
 });

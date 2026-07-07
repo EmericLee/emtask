@@ -145,33 +145,69 @@ class _AppScaffoldState extends State<_AppScaffold>
             ),
             destinations: const [
               NavigationRailDestination(
-                icon: Icon(Icons.work_outline),
-                selectedIcon: Icon(Icons.work),
+                icon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.work_outline),
+                ),
+                selectedIcon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.work),
+                ),
                 label: Text('当前'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.checklist_outlined),
-                selectedIcon: Icon(Icons.checklist),
+                icon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.checklist_outlined),
+                ),
+                selectedIcon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.checklist),
+                ),
                 label: Text('任务'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.calendar_month_outlined),
-                selectedIcon: Icon(Icons.calendar_month),
+                icon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.calendar_month_outlined),
+                ),
+                selectedIcon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.calendar_month),
+                ),
                 label: Text('日历'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.sync_outlined),
-                selectedIcon: Icon(Icons.sync),
+                icon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.sync_outlined),
+                ),
+                selectedIcon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.sync),
+                ),
                 label: Text('同步'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.bug_report_outlined),
-                selectedIcon: Icon(Icons.bug_report),
+                icon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.bug_report_outlined),
+                ),
+                selectedIcon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.bug_report),
+                ),
                 label: Text('诊断'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
+                icon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.settings_outlined),
+                ),
+                selectedIcon: Padding(
+                  padding: EdgeInsets.only(right: 8),
+                  child: Icon(Icons.settings),
+                ),
                 label: Text('设置'),
               ),
             ],

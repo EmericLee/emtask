@@ -129,6 +129,23 @@ class AppDatabase extends _$AppDatabase {
     return q.map(_toTaskEntity).get();
   }
 
+  /// 响应式监听待同步任务数（dirty 或 deleted 的任务总数）。
+  Stream<int> watchDirtyTaskCount() {
+    final dirtyQ = selectOnly(tasks)
+      ..addColumns([tasks.id.count()])
+      ..where(tasks.dirty.equals(true));
+    final deletedQ = selectOnly(tasks)
+      ..addColumns([tasks.id.count()])
+      ..where(tasks.deleted.equals(true));
+    // 合并两个查询的流并求和
+    return dirtyQ.watchSingle().asyncMap((dirtyRow) async {
+      final deletedCount = await deletedQ.getSingle();
+      final d = dirtyRow.read(tasks.id.count()) ?? 0;
+      final del = deletedCount.read(tasks.id.count()) ?? 0;
+      return d + del;
+    });
+  }
+
   Future<Task> createTask(Task task) async {
     final companion = _toCompanion(task, isNew: true);
     final id = await into(tasks).insert(companion);
