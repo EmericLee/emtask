@@ -113,6 +113,34 @@ class CalDavClient {
     return _parseTaskMultistatus(resp.body);
   }
 
+  /// sync-collection REPORT（RFC 6578 增量同步）。
+  ///
+  /// [syncToken] 为上次同步获取的 token，传 null 或空字符串则全量拉取。
+  /// 服务器返回变更/新增/删除的资源及新的 token。
+  Future<SyncCollectionResult> syncCollection({
+    required String calendarHref,
+    required String? syncToken,
+  }) async {
+    final tokenElement = (syncToken != null && syncToken.isNotEmpty)
+        ? '<d:sync-token>$syncToken</d:sync-token>'
+        : '<d:sync-token/>';
+    final body = '''<?xml version="1.0" encoding="UTF-8"?>
+<d:sync-collection xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  $tokenElement
+  <d:prop>
+    <d:getetag/>
+    <c:calendar-data/>
+  </d:prop>
+</d:sync-collection>''';
+    final resp = await _send(
+      method: CalDavMethod.report,
+      path: calendarHref,
+      body: body,
+      contentType: 'application/xml; charset=utf-8',
+    );
+    return _parseSyncCollectionResponse(resp.body);
+  }
+
   /// 下载单个任务 .ics。
   Future<DavTaskResource> getTask(String taskHref) async {
     final resp = await _send(
@@ -474,6 +502,54 @@ class CalDavClient {
       ));
     }
     return results;
+  }
+
+  /// 解析 sync-collection REPORT 响应。
+  ///
+  /// 响应格式与普通 multistatus 类似，但：
+  /// - 根元素下有 `<sync-token>` 表示新令牌
+  /// - 删除的资源以 `<response><status>404</status></response>` 表示（无 propstat）
+  static SyncCollectionResult _parseSyncCollectionResponse(String xmlStr) {
+    final doc = XmlDocument.parse(xmlStr);
+    final multistatus = doc.rootElement;
+
+    final resources = <DavTaskResource>[];
+    final deletedHrefs = <String>[];
+
+    for (final response in multistatus.findElements('response', namespace: '*')) {
+      final href = _childText(response, 'href');
+      if (href == null) continue;
+
+      final propstat = response.findElements('propstat', namespace: '*').firstOrNull;
+      if (propstat != null) {
+        // 新增/更新的资源
+        final prop = propstat.findElements('prop', namespace: '*').firstOrNull;
+        if (prop != null) {
+          final etag = _childText(prop, 'getetag');
+          final calendarData = _childText(prop, 'calendar-data');
+          resources.add(DavTaskResource(
+            href: href,
+            etag: etag,
+            icalData: calendarData,
+          ));
+        }
+      } else {
+        // 无 propstat，检查是否有 404 状态（删除的资源）
+        final status = _childText(response, 'status');
+        if (status != null && status.contains('404')) {
+          deletedHrefs.add(href);
+        }
+      }
+    }
+
+    // 根元素下的 sync-token
+    final newToken = _childText(multistatus, 'sync-token') ?? '';
+
+    return SyncCollectionResult(
+      resources: resources,
+      deletedHrefs: deletedHrefs,
+      syncToken: newToken,
+    );
   }
 
   static String? _childText(XmlElement parent, String name) {

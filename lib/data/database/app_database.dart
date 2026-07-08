@@ -223,6 +223,11 @@ class AppDatabase extends _$AppDatabase {
         .go();
   }
 
+  /// 按 href 硬删除任务（sync-collection 远端删除通知用）。
+  Future<void> hardDeleteByHref(String href) async {
+    await (delete(tasks)..where((t) => t.href.equals(href))).go();
+  }
+
   /// 批量更新任务排序值（手动拖拽排序后调用）。
   /// [orderedIds] 为按新顺序排列的任务 localId 列表。
   Future<void> updateSortOrders(List<int> orderedIds) async {

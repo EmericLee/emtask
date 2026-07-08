@@ -53,3 +53,21 @@ class DavTaskResource {
   /// iCalendar 原文（calendar-data）
   final String? icalData;
 }
+
+/// sync-collection REPORT 结果（RFC 6578 增量同步）。
+class SyncCollectionResult {
+  SyncCollectionResult({
+    required this.resources,
+    required this.deletedHrefs,
+    required this.syncToken,
+  });
+
+  /// 新增 / 更新的任务资源
+  final List<DavTaskResource> resources;
+
+  /// 远端已删除的任务 HREF 列表
+  final List<String> deletedHrefs;
+
+  /// 新的 sync-token，用于下次增量同步
+  final String syncToken;
+}
