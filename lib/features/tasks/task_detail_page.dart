@@ -202,6 +202,158 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
   }
 }
 
+/// 任务详情面板（用于宽屏侧栏嵌入）。
+///
+/// 与 [TaskDetailPage] 功能一致，但以关闭按钮替代返回按钮，
+/// 删除任务后通过 [onClose] 回调通知父组件清除选中状态。
+class TaskDetailPanel extends ConsumerStatefulWidget {
+  const TaskDetailPanel({
+    super.key,
+    required this.taskId,
+    this.onClose,
+  });
+
+  final int taskId;
+  final VoidCallback? onClose;
+
+  @override
+  ConsumerState<TaskDetailPanel> createState() => _TaskDetailPanelState();
+}
+
+class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
+  Task? _loaded;
+  bool _loading = true;
+  String? _loadError;
+  List<String> _allTags = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  @override
+  void didUpdateWidget(covariant TaskDetailPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.taskId != widget.taskId) {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final repo = ref.read(taskRepositoryProvider);
+      final all = await repo.getAll();
+      final t = all.firstWhere(
+        (x) => x.localId == widget.taskId,
+        orElse: () => throw StateError('任务不存在'),
+      );
+      final tags = <String>{};
+      for (final x in all) {
+        tags.addAll(x.categories);
+      }
+      if (!mounted) return;
+      setState(() {
+        _loaded = t;
+        _allTags = tags.toList()..sort();
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = e.toString();
+      });
+    }
+  }
+
+  Future<void> _update(Task Function(Task) updater) async {
+    final t = _loaded;
+    if (t == null) return;
+    final next = updater(t).copyWith(
+      lastModified: DateTime.now().toUtc(),
+      localModifiedAt: DateTime.now().toUtc(),
+      dirty: true,
+    );
+    final repo = ref.read(taskRepositoryProvider);
+    await repo.update(next);
+    if (mounted) setState(() => _loaded = next);
+  }
+
+  Future<void> _delete() async {
+    final t = _loaded;
+    if (t == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除任务'),
+        content: Text('确定要删除「${t.summary}」吗？'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('删除')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final repo = ref.read(taskRepositoryProvider);
+    await repo.delete(t.uid);
+    if (mounted) widget.onClose?.call();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final calendarsAsync = ref.watch(calendarListProvider);
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          onPressed: widget.onClose,
+          tooltip: '关闭',
+        ),
+        title: const Text('任务详情'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            onPressed: _delete,
+            tooltip: '删除',
+          ),
+        ],
+      ),
+      body: _buildBody(calendarsAsync),
+    );
+  }
+
+  Widget _buildBody(AsyncValue<List<Calendar>> calendarsAsync) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(_loadError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ),
+      );
+    }
+    final t = _loaded;
+    if (t == null) {
+      return const Center(child: Text('任务不存在'));
+    }
+    return _DetailList(
+      task: t,
+      calendarsAsync: calendarsAsync,
+      allTags: _allTags,
+      onUpdate: _update,
+    );
+  }
+}
+
 // ==================== 详情列表（就地编辑） ====================
 
 class _DetailList extends StatefulWidget {
@@ -320,7 +472,7 @@ class _DetailListState extends State<_DetailList> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       children: [
-        // 标题（就地 TextField）
+        // 标题（就地 TextField，自动换行）
         if (_editingTitle)
           Padding(
             padding:
@@ -329,8 +481,7 @@ class _DetailListState extends State<_DetailList> {
               controller: _titleCtrl,
               focusNode: _titleFocus,
               autofocus: true,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _commitTitle(),
+              maxLines: null,
               decoration: InputDecoration(
                 labelText: '标题',
                 border: const OutlineInputBorder(),
@@ -346,6 +497,7 @@ class _DetailListState extends State<_DetailList> {
             icon: Icons.title,
             label: '标题',
             value: task.summary,
+            maxLines: null,
             style: theme.textTheme.titleMedium?.copyWith(
               decoration: task.isCompleted ? TextDecoration.lineThrough : null,
               color: task.isCompleted ? scheme.outline : null,
@@ -1370,7 +1522,7 @@ class _EditTile extends StatelessWidget {
   final Color? valueColor;
   final Widget? trailing;
   final TextStyle? style;
-  final int maxLines;
+  final int? maxLines;
   final int? minLines;
   final bool mono;
 

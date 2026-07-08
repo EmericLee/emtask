@@ -4,10 +4,12 @@ abstract class SyncRepository {
   /// 1. 上传本地 dirty / deleted 任务
   /// 2. 拉取远端变更（基于 ctag / sync-token）
   /// 3. 冲突处理（远端优先 / 本地优先 / 手动合并）
-  Future<SyncResult> sync();
+  ///
+  /// [allDayDates] 为 true 时，DTSTART / DUE 以 VALUE=DATE 格式上传（仅日期）。
+  Future<SyncResult> sync({bool allDayDates = false});
 
   /// 仅上传本地变更
-  Future<SyncResult> push();
+  Future<SyncResult> push({bool allDayDates = false});
 
   /// 仅拉取远端变更
   Future<SyncResult> pull();

@@ -12,8 +12,15 @@ import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
 import '../sync/sync_providers.dart';
+import 'task_detail_page.dart';
 import 'task_list_pdf.dart';
 import 'task_providers.dart';
+
+/// 宽屏下当前选中的任务 ID（用于主从布局右侧详情面板）。
+final selectedTaskIdProvider = StateProvider<int?>((ref) => null);
+
+/// 宽屏阈值（与 NavigationRail 扩展阈值一致）。
+const _wideScreenThreshold = 1100.0;
 
 /// PDF 生成所需的数据包（避免两个按钮重复计算）。
 class _PdfData {
@@ -100,6 +107,8 @@ class MyWorkPage extends ConsumerWidget {
     final orphanMode = ref.watch(orphanDisplayModeProvider);
     final syncState = ref.watch(syncControllerProvider);
     final pendingCount = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
+    final isWide = MediaQuery.of(context).size.width > _wideScreenThreshold;
+    final selectedTaskId = ref.watch(selectedTaskIdProvider);
 
     // 执行同步并显示结果提示
     Future<void> doSync() async {
@@ -306,55 +315,95 @@ class MyWorkPage extends ConsumerWidget {
           ),
         ],
       ),
-      body: tasksAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _EmptyState(
-          icon: Icons.cloud_off,
-          title: '加载失败',
-          message: e.toString(),
-        ),
-        data: (tasks) {
-          final calendarNames = calendarNamesAsync.valueOrNull ?? {};
-          final calendarColors = calendarColorsAsync.valueOrNull ?? {};
-          var visibleTasks = _applyFilters(tasks, hideHours: hideHours);
-          // 按清单过滤
-          if (selectedCalendar != null) {
-            visibleTasks = visibleTasks
-                .where((t) => t.calendarUrl == selectedCalendar)
-                .toList();
-          }
-          // 标签集合由 _availableTagsProvider 派生计算，此处无需写入。
-          final isTagFiltered =
-              selectedTag != null && selectedTag != '__all__';
-          final matchedTasks = isTagFiltered
-              ? visibleTasks
-                  .where((t) => t.categories.contains(selectedTag))
-                  .toList()
-              : visibleTasks;
-          // 树状模式：向上追溯父任务链，保持完整树状结构。
-          // 前缀模式：仅保留匹配任务，孤儿在 _WorkTaskTree 中提升为根。
-          final displayTasks = isTagFiltered &&
-                  orphanMode == OrphanDisplayMode.tree
-              ? _withAncestors(matchedTasks, allTasks: visibleTasks)
-              : matchedTasks;
-          final sortedTasks = _applySort(displayTasks, sortMode: sortMode);
-          final groups = _groupByCalendar(sortedTasks, calendarNames);
-          if (groups.isEmpty) {
-            return const _EmptyState(
-              icon: Icons.work_outline,
-              title: '暂无任务',
-              message: '当前没有待办任务',
-            );
-          }
-          return _CurrentTaskList(
-            groups: groups,
-            calendarColors: calendarColors,
-            debugSortOrder: debugSort,
-            orphanMode: orphanMode,
-            allTasks: visibleTasks,
-          );
-        },
+      body: _buildBody(
+        context,
+        ref,
+        tasksAsync: tasksAsync,
+        calendarNamesAsync: calendarNamesAsync,
+        calendarColorsAsync: calendarColorsAsync,
+        hideHours: hideHours,
+        sortMode: sortMode,
+        selectedTag: selectedTag,
+        selectedCalendar: selectedCalendar,
+        debugSort: debugSort,
+        orphanMode: orphanMode,
+        isWide: isWide,
+        selectedTaskId: selectedTaskId,
       ),
+    );
+  }
+
+  /// 构建主体：宽屏显示主从布局（列表+详情侧栏），窄屏仅列表。
+  Widget _buildBody(
+    BuildContext context,
+    WidgetRef ref, {
+    required AsyncValue<List<Task>> tasksAsync,
+    required AsyncValue<Map<String, String>> calendarNamesAsync,
+    required AsyncValue<Map<String, Color>> calendarColorsAsync,
+    required int hideHours,
+    required SortMode sortMode,
+    required String? selectedTag,
+    required String? selectedCalendar,
+    required bool debugSort,
+    required OrphanDisplayMode orphanMode,
+    required bool isWide,
+    required int? selectedTaskId,
+  }) {
+    final listWidget = tasksAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _EmptyState(
+        icon: Icons.cloud_off,
+        title: '加载失败',
+        message: e.toString(),
+      ),
+      data: (tasks) {
+        final calendarNames = calendarNamesAsync.valueOrNull ?? {};
+        final calendarColors = calendarColorsAsync.valueOrNull ?? {};
+        var visibleTasks = _applyFilters(tasks, hideHours: hideHours);
+        if (selectedCalendar != null) {
+          visibleTasks = visibleTasks
+              .where((t) => t.calendarUrl == selectedCalendar)
+              .toList();
+        }
+        final isTagFiltered =
+            selectedTag != null && selectedTag != '__all__';
+        final matchedTasks = isTagFiltered
+            ? visibleTasks
+                .where((t) => t.categories.contains(selectedTag))
+                .toList()
+            : visibleTasks;
+        final displayTasks = isTagFiltered &&
+                orphanMode == OrphanDisplayMode.tree
+            ? _withAncestors(matchedTasks, allTasks: visibleTasks)
+            : matchedTasks;
+        final sortedTasks = _applySort(displayTasks, sortMode: sortMode);
+        final groups = _groupByCalendar(sortedTasks, calendarNames);
+        if (groups.isEmpty) {
+          return const _EmptyState(
+            icon: Icons.work_outline,
+            title: '暂无任务',
+            message: '当前没有待办任务',
+          );
+        }
+        return _CurrentTaskList(
+          groups: groups,
+          calendarColors: calendarColors,
+          debugSortOrder: debugSort,
+          orphanMode: orphanMode,
+          allTasks: visibleTasks,
+          isWide: isWide,
+        );
+      },
+    );
+
+    if (!isWide) return listWidget;
+
+    // 宽屏：列表 + 可收缩详情侧栏
+    return _WideScreenBody(
+      listWidget: listWidget,
+      selectedTaskId: selectedTaskId,
+      onClosePanel: () =>
+          ref.read(selectedTaskIdProvider.notifier).state = null,
     );
   }
 
@@ -767,6 +816,7 @@ class _CurrentTaskList extends ConsumerStatefulWidget {
     required this.debugSortOrder,
     required this.orphanMode,
     required this.allTasks,
+    this.isWide = false,
   });
 
   final Map<String, List<Task>> groups;
@@ -774,6 +824,7 @@ class _CurrentTaskList extends ConsumerStatefulWidget {
   final bool debugSortOrder;
   final OrphanDisplayMode orphanMode;
   final List<Task> allTasks;
+  final bool isWide;
 
   @override
   ConsumerState<_CurrentTaskList> createState() => _CurrentTaskListState();
@@ -912,6 +963,8 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     final hasChildren = children.isNotEmpty;
     final isExpanded = _expanded.contains(task.uid);
     final parentPath = tree.parentPathOf(task.uid);
+    final selectedTaskId = ref.watch(selectedTaskIdProvider);
+    final isSelected = selectedTaskId == task.localId;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -924,6 +977,8 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
           childCount: children.length,
           debugSortOrder: widget.debugSortOrder,
           parentPath: parentPath,
+          isWide: widget.isWide,
+          selected: isSelected,
           onToggle: hasChildren
               ? () => setState(() {
                     if (isExpanded) {
@@ -1001,6 +1056,8 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
     required this.debugSortOrder,
     this.parentPath,
     this.onToggle,
+    this.isWide = false,
+    this.selected = false,
   });
 
   final Task task;
@@ -1012,6 +1069,8 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
   /// 前缀模式下孤儿子任务的父路径前缀（如 "父任务 › 子任务"），null 表示无前缀。
   final String? parentPath;
   final VoidCallback? onToggle;
+  final bool isWide;
+  final bool selected;
 
   @override
   ConsumerState<_WorkTaskTile> createState() => _WorkTaskTileState();
@@ -1036,9 +1095,17 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
           onTap: () => _showDetail(context),
           child: Container(
             decoration: BoxDecoration(
-              color: _hovering
-                  ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
-                  : Colors.white,
+              color: widget.selected
+                  ? scheme.primaryContainer.withValues(alpha: 0.35)
+                  : (_hovering
+                      ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
+                      : Colors.white),
+              border: widget.selected
+                  ? Border(
+                      left: BorderSide(
+                          color: scheme.primary, width: 3),
+                    )
+                  : null,
               boxShadow: [
                 BoxShadow(
                   // 向左下角投影，效果细微
@@ -1056,26 +1123,25 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // 展开指示器：小、浅灰，无子任务留白。
+                      // 展开指示器：使用 GestureDetector 拦截点击，避免触发外层 InkWell
                       if (widget.hasChildren)
-                        SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            iconSize: 12,
-                            splashRadius: 8,
-                            color: scheme.outlineVariant,
-                            icon: Icon(
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: widget.onToggle,
+                          child: SizedBox(
+                            width: 28,
+                            height: 28,
+                            child: Icon(
                               widget.isExpanded
                                   ? Icons.expand_more
                                   : Icons.chevron_right,
+                              size: 18,
+                              color: scheme.outlineVariant,
                             ),
-                            onPressed: widget.onToggle,
                           ),
                         )
                       else
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 28),
                       const SizedBox(width: 4),
                       // 标题与备注图标
                       Expanded(
@@ -1304,9 +1370,13 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
     }
   }
 
-  /// 跳转到任务详情页。
+  /// 跳转到任务详情页。宽屏下选中任务在侧栏展示，窄屏下推送全页详情。
   void _showDetail(BuildContext context) {
-    context.push('/tasks/${widget.task.localId}');
+    if (widget.isWide) {
+      ref.read(selectedTaskIdProvider.notifier).state = widget.task.localId;
+    } else {
+      context.push('/tasks/${widget.task.localId}');
+    }
   }
 }
 
@@ -1360,6 +1430,102 @@ class _IconButton extends StatelessWidget {
         padding: EdgeInsets.zero,
         onPressed: onPressed,
       ),
+    );
+  }
+}
+
+/// 宽屏主体：列表 + 可收缩详情侧栏。
+///
+/// 侧栏默认隐藏，选中任务后从右侧滑入展开，关闭后向右收缩。
+/// 切换不同任务时直接替换内容（不重新触发动画）。
+class _WideScreenBody extends StatefulWidget {
+  const _WideScreenBody({
+    required this.listWidget,
+    required this.selectedTaskId,
+    required this.onClosePanel,
+  });
+
+  final Widget listWidget;
+  final int? selectedTaskId;
+  final VoidCallback onClosePanel;
+
+  @override
+  State<_WideScreenBody> createState() => _WideScreenBodyState();
+}
+
+class _WideScreenBodyState extends State<_WideScreenBody>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  /// 当前侧栏中显示的任务 ID（动画期间保持，避免内容在收缩中途消失）。
+  int? _displayedTaskId;
+
+  /// 侧栏总宽度（420 内容 + 1 分隔线）。
+  static const _panelWidth = 421.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 280),
+      vsync: this,
+      value: widget.selectedTaskId != null ? 1.0 : 0.0,
+    );
+    _displayedTaskId = widget.selectedTaskId;
+  }
+
+  @override
+  void didUpdateWidget(_WideScreenBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.selectedTaskId != oldWidget.selectedTaskId) {
+      if (widget.selectedTaskId != null) {
+        // 选中新任务：立即更新内容，若侧栏未展开则展开
+        _displayedTaskId = widget.selectedTaskId;
+        if (_controller.value < 1.0) {
+          _controller.forward();
+        }
+      } else {
+        // 关闭侧栏：先收缩，动画结束后清除内容
+        _controller.reverse().then((_) {
+          if (mounted && widget.selectedTaskId == null) {
+            setState(() => _displayedTaskId = null);
+          }
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: widget.listWidget),
+        if (_displayedTaskId != null)
+          SizeTransition(
+            axis: Axis.horizontal,
+            axisAlignment: 1.0,
+            sizeFactor: _controller,
+            child: SizedBox(
+              width: _panelWidth,
+              child: Row(
+                children: [
+                  const VerticalDivider(width: 1),
+                  Expanded(
+                    child: TaskDetailPanel(
+                      taskId: _displayedTaskId!,
+                      onClose: widget.onClosePanel,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

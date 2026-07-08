@@ -6,6 +6,7 @@ import '../../core/theme/theme_controller.dart';
 import '../../core/utils/platform_info.dart';
 import '../../data/datasources/caldav/caldav_account.dart';
 import '../../data/providers.dart';
+import '../sync/sync_providers.dart';
 import '../tasks/task_providers.dart';
 
 /// 设置页：配置 CalDAV / Nextcloud 账户。
@@ -170,6 +171,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onChanged: (v) =>
                 ref.read(showTimeInDateFieldProvider.notifier).state = v,
           ),
+          const SizedBox(height: 24),
+          // 同步设置
+          Text('同步',
+              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          _AutoSyncIntervalSelector(ref: ref),
           const SizedBox(height: 24),
           Card(
             child: ListTile(
@@ -371,6 +378,58 @@ class _ColorChip extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// 同步检查间隔选择器（控制 pull 定时检查频率）。
+class _AutoSyncIntervalSelector extends StatelessWidget {
+  const _AutoSyncIntervalSelector({required this.ref});
+
+  final WidgetRef ref;
+
+  @override
+  Widget build(BuildContext context) {
+    final interval = ref.watch(autoSyncIntervalProvider);
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text('同步检查间隔', style: theme.textTheme.bodyMedium),
+            ),
+            DropdownButton<int>(
+              value: interval,
+              items: const [
+                DropdownMenuItem(value: 5, child: Text('5 分钟')),
+                DropdownMenuItem(value: 10, child: Text('10 分钟')),
+                DropdownMenuItem(value: 15, child: Text('15 分钟')),
+                DropdownMenuItem(value: 30, child: Text('30 分钟')),
+              ],
+              onChanged: (v) {
+                if (v != null) {
+                  ref.read(autoSyncIntervalProvider.notifier).state = v;
+                  // 重启定时器使新间隔立即生效（不重置同步状态）
+                  ref.read(syncControllerProvider.notifier).restartAutoSyncTimer();
+                }
+              },
+            ),
+          ],
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            'dirty 任务 10 秒后自动上传；上传后 5 分钟未拉取则拉取；'
+            '超过此处设置的间隔未拉取则强制拉取。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.outline,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

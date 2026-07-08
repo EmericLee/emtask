@@ -72,7 +72,10 @@ class IcalSerializer {
   }
 
   /// 将 [Task] 序列化为完整 iCalendar 文本（VCALENDAR 包裹 VTODO）。
-  static String serialize(Task task) {
+  ///
+  /// [allDayDates] 为 true 时，DTSTART / DUE 使用 VALUE=DATE 格式（仅日期），
+  /// 与"日期字段不显示时间"的设置绑定。COMPLETED 始终为 DATE-TIME（RFC 5545 要求）。
+  static String serialize(Task task, {bool allDayDates = false}) {
     final buf = StringBuffer()
       ..writeln('BEGIN:VCALENDAR')
       ..writeln('VERSION:2.0')
@@ -87,10 +90,18 @@ class IcalSerializer {
       buf.writeln('DESCRIPTION:${_escapeText(task.description)}');
     }
     if (task.start != null) {
-      buf.writeln('DTSTART:${_formatDate(task.start!)}');
+      if (allDayDates) {
+        buf.writeln('DTSTART;VALUE=DATE:${_formatDateOnly(task.start!)}');
+      } else {
+        buf.writeln('DTSTART:${_formatDate(task.start!)}');
+      }
     }
     if (task.due != null) {
-      buf.writeln('DUE:${_formatDate(task.due!)}');
+      if (allDayDates) {
+        buf.writeln('DUE;VALUE=DATE:${_formatDateOnly(task.due!)}');
+      } else {
+        buf.writeln('DUE:${_formatDate(task.due!)}');
+      }
     }
     if (task.completed != null) {
       buf.writeln('COMPLETED:${_formatDate(task.completed!)}');
@@ -193,6 +204,14 @@ class IcalSerializer {
     return '${utc.year.toString().padLeft(4, '0')}'
         '${two(utc.month)}${two(utc.day)}'
         'T${two(utc.hour)}${two(utc.minute)}${two(utc.second)}Z';
+  }
+
+  /// 仅日期格式（VALUE=DATE）：YYYYMMDD，无时间部分。
+  static String _formatDateOnly(DateTime dt) {
+    final utc = dt.toUtc();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${utc.year.toString().padLeft(4, '0')}'
+        '${two(utc.month)}${two(utc.day)}';
   }
 
   static DateTime? _parseDate(_IcalProperty? prop) {

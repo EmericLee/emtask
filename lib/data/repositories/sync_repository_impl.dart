@@ -26,10 +26,10 @@ class SyncRepositoryImpl implements SyncRepository {
   static const String _tag = 'Sync';
 
   @override
-  Future<SyncResult> sync() async {
+  Future<SyncResult> sync({bool allDayDates = false}) async {
     AppLogger.instance.i(_tag, '==== 开始完整同步 ====');
     try {
-      final pushResult = await push();
+      final pushResult = await push(allDayDates: allDayDates);
       // push 失败时停止同步，继续 pull 会用远端数据覆盖本地修改
       if (pushResult.error != null) {
         AppLogger.instance.e(_tag, 'push 失败，中止同步（不执行 pull）');
@@ -62,7 +62,7 @@ class SyncRepositoryImpl implements SyncRepository {
   }
 
   @override
-  Future<SyncResult> push() async {
+  Future<SyncResult> push({bool allDayDates = false}) async {
     AppLogger.instance.i(_tag, '---- 开始 push ----');
     var uploaded = 0;
     var deleted = 0;
@@ -77,7 +77,7 @@ class SyncRepositoryImpl implements SyncRepository {
           continue;
         }
 
-        final ical = IcalSerializer.serialize(task);
+        final ical = IcalSerializer.serialize(task, allDayDates: allDayDates);
         // 优先使用已存储的 href（来自上次同步），没有时才按 uid 计算
         final taskHref = task.href ?? _taskHref(cal.url, task.uid);
 
