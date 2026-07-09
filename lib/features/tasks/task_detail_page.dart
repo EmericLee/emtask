@@ -37,6 +37,8 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
   String? _newCalendarUrl;
   // 所有任务已用过的标签集合（供标签编辑器检索）
   List<String> _allTags = const [];
+  // 一次性自动编辑标题信号
+  bool _autoEditTitle = false;
 
   @override
   void initState() {
@@ -58,6 +60,11 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
   }
 
   Future<void> _load() async {
+    // 读取并消费一次性自动编辑信号
+    final autoEdit = ref.read(autoEditTitleProvider);
+    if (autoEdit) {
+      ref.read(autoEditTitleProvider.notifier).state = false;
+    }
     final id = int.tryParse(widget.taskId);
     if (id == null) {
       setState(() {
@@ -66,6 +73,7 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
       });
       return;
     }
+    setState(() => _autoEditTitle = autoEdit);
     try {
       final repo = ref.read(taskRepositoryProvider);
       final all = await repo.getAll();
@@ -106,6 +114,33 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
     if (mounted) setState(() => _loaded = next);
   }
 
+  /// 外部任务列表变化时同步刷新（不显示 loading，避免闪烁）。
+  Future<void> _refreshFromExternal() async {
+    final current = _loaded;
+    if (current == null || _loading) return;
+    try {
+      final repo = ref.read(taskRepositoryProvider);
+      final all = await repo.getAll();
+      final t = all.firstWhere(
+        (x) => x.localId == int.tryParse(widget.taskId),
+        orElse: () => throw StateError('任务不存在'),
+      );
+      if (!mounted) return;
+      if (t != current) {
+        final tags = <String>{};
+        for (final x in all) {
+          tags.addAll(x.categories);
+        }
+        setState(() {
+          _loaded = t;
+          _allTags = tags.toList()..sort();
+        });
+      }
+    } catch (_) {
+      // 静默忽略：外部刷新失败不影响当前显示
+    }
+  }
+
   Future<void> _create(Task task) async {
     final repo = ref.read(taskRepositoryProvider);
     await repo.create(task);
@@ -139,6 +174,11 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
   @override
   Widget build(BuildContext context) {
     final calendarsAsync = ref.watch(calendarListProvider);
+    // 监听任务列表变化，外部修改后同步刷新（如任务条内联编辑标题）
+    ref.listen(taskListProvider, (prev, next) {
+      if (_isNew || _loaded == null) return;
+      next.whenData((_) => _refreshFromExternal());
+    });
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -198,6 +238,7 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
       calendarsAsync: calendarsAsync,
       allTags: _allTags,
       onUpdate: _update,
+      autoEditTitle: _autoEditTitle,
     );
   }
 }
@@ -225,6 +266,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   bool _loading = true;
   String? _loadError;
   List<String> _allTags = const [];
+  bool _autoEditTitle = false;
 
   @override
   void initState() {
@@ -241,7 +283,15 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    // 读取并消费一次性自动编辑信号
+    final autoEdit = ref.read(autoEditTitleProvider);
+    if (autoEdit) {
+      ref.read(autoEditTitleProvider.notifier).state = false;
+    }
+    setState(() {
+      _loading = true;
+      _autoEditTitle = autoEdit;
+    });
     try {
       final repo = ref.read(taskRepositoryProvider);
       final all = await repo.getAll();
@@ -281,6 +331,33 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     if (mounted) setState(() => _loaded = next);
   }
 
+  /// 外部任务列表变化时同步刷新（不显示 loading，避免闪烁）。
+  Future<void> _refreshFromExternal() async {
+    final current = _loaded;
+    if (current == null || _loading) return;
+    try {
+      final repo = ref.read(taskRepositoryProvider);
+      final all = await repo.getAll();
+      final t = all.firstWhere(
+        (x) => x.localId == widget.taskId,
+        orElse: () => throw StateError('任务不存在'),
+      );
+      if (!mounted) return;
+      if (t != current) {
+        final tags = <String>{};
+        for (final x in all) {
+          tags.addAll(x.categories);
+        }
+        setState(() {
+          _loaded = t;
+          _allTags = tags.toList()..sort();
+        });
+      }
+    } catch (_) {
+      // 静默忽略：外部刷新失败不影响当前显示
+    }
+  }
+
   Future<void> _delete() async {
     final t = _loaded;
     if (t == null) return;
@@ -308,6 +385,11 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   @override
   Widget build(BuildContext context) {
     final calendarsAsync = ref.watch(calendarListProvider);
+    // 监听任务列表变化，外部修改后同步刷新（如任务条内联编辑标题）
+    ref.listen(taskListProvider, (prev, next) {
+      if (_loaded == null) return;
+      next.whenData((_) => _refreshFromExternal());
+    });
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -350,6 +432,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
       calendarsAsync: calendarsAsync,
       allTags: _allTags,
       onUpdate: _update,
+      autoEditTitle: _autoEditTitle,
     );
   }
 }
@@ -362,12 +445,16 @@ class _DetailList extends StatefulWidget {
     required this.calendarsAsync,
     required this.allTags,
     required this.onUpdate,
+    this.autoEditTitle = false,
   });
 
   final Task task;
   final AsyncValue<List<Calendar>> calendarsAsync;
   final List<String> allTags;
   final Future<void> Function(Task Function(Task) updater) onUpdate;
+
+  /// 是否在首次构建时自动进入标题编辑状态（新建任务场景）。
+  final bool autoEditTitle;
 
   @override
   State<_DetailList> createState() => _DetailListState();
@@ -382,9 +469,16 @@ class _DetailListState extends State<_DetailList> {
   @override
   void initState() {
     super.initState();
+    _editingTitle = widget.autoEditTitle;
     _titleCtrl = TextEditingController(text: widget.task.summary);
     _titleFocus = FocusNode();
     _titleFocus.addListener(_onTitleFocusChange);
+    // 自动编辑时请求焦点
+    if (widget.autoEditTitle) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _titleFocus.requestFocus();
+      });
+    }
   }
 
   @override
@@ -472,7 +566,7 @@ class _DetailListState extends State<_DetailList> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       children: [
-        // 标题（就地 TextField，自动换行）
+        // 标题（就地 TextField，单行，回车保存）
         if (_editingTitle)
           Padding(
             padding:
@@ -481,7 +575,9 @@ class _DetailListState extends State<_DetailList> {
               controller: _titleCtrl,
               focusNode: _titleFocus,
               autofocus: true,
-              maxLines: null,
+              maxLines: 1,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _commitTitle(),
               decoration: InputDecoration(
                 labelText: '标题',
                 border: const OutlineInputBorder(),
@@ -784,13 +880,14 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
     final media = MediaQuery.of(ctx);
     final showTime = ref.read(showTimeInDateFieldProvider);
 
-    const panelWidth = 320.0;
-    final panelHeight = showTime ? 500.0 : 440.0;
+    const panelWidth = 296.0;
+    final panelHeight = showTime ? 420.0 : 380.0;
     // 下方空间不足则向上弹出
     final showBelow =
         topLeft.dy + size.height + panelHeight + 16 < media.size.height;
     final top = showBelow
-        ? topLeft.dy + size.height + 4
+        ? math.min(topLeft.dy + size.height + 4,
+            media.size.height - panelHeight - 8)
         : math.max(8.0, topLeft.dy - panelHeight - 4);
     final left = (topLeft.dx)
         .clamp(8.0, math.max(8.0, media.size.width - panelWidth - 8))
@@ -888,7 +985,7 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       SizedBox(
-                        height: 380,
+                        height: 320,
                         child: CalendarDatePicker(
                           initialDate: _date,
                           firstDate: DateTime(widget.initial.year - 5),

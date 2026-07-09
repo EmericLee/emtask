@@ -39,6 +39,12 @@ final orphanDisplayModeProvider = StateProvider<OrphanDisplayMode>(
 /// 是否隐藏已完成。
 final hideCompletedProvider = StateProvider<bool>((ref) => false);
 
+/// 新建任务后自动进入标题编辑状态（一次性信号）。
+///
+/// 设置为 true 后，详情页加载时将自动进入标题编辑模式；
+/// 进入后应立即重置为 false，避免影响后续打开。
+final autoEditTitleProvider = StateProvider<bool>((ref) => false);
+
 /// 日期字段是否显示时间（默认只显示日期，可在系统配置中开启）。
 final showTimeInDateFieldProvider = StateProvider<bool>((ref) => false);
 
