@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart' show Color, Colors;
@@ -7,6 +8,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../../domain/entities/task.dart';
+import '../../domain/entities/task_status.dart';
 import 'task_providers.dart';
 
 /// 构建任务清单 PDF。
@@ -171,7 +173,32 @@ void _buildNode(
                   )
                 : null,
           ),
-          pw.SizedBox(width: 6),
+          pw.SizedBox(width: 4),
+          // 优先级五角星：实心=高/中，空心=低，none 不显示
+          if (task.priority != TaskPriority.none) ...[
+            _buildPriorityStar(task.priority, 10),
+            pw.SizedBox(width: 4),
+          ],
+          // 进行中标记
+          if (task.status == TaskStatus.inProcess && !task.isCompleted) ...[
+            pw.Container(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+              margin: const pw.EdgeInsets.only(top: 1),
+              decoration: pw.BoxDecoration(
+                color: PdfColors.blue50,
+                borderRadius: pw.BorderRadius.circular(3),
+                border: pw.Border.all(color: PdfColors.blue300, width: 0.5),
+              ),
+              child: pw.Text(
+                '进行中',
+                style: const pw.TextStyle(
+                  fontSize: 7,
+                  color: PdfColors.blue800,
+                ),
+              ),
+            ),
+            pw.SizedBox(width: 4),
+          ],
           // 标题区
           pw.Expanded(
             child: pw.Column(
@@ -269,6 +296,54 @@ PdfColor _toPdfColor(Color color) {
     color.green / 255,
     color.blue / 255,
     color.alpha / 255,
+  );
+}
+
+/// 绘制优先级五角星：实心对应高/中，空心对应低。
+/// 使用 CustomPaint 直接绘制矢量路径，避免字体符号显示异常。
+pw.Widget _buildPriorityStar(TaskPriority priority, double size) {
+  final isFilled = priority != TaskPriority.low;
+  final color = priority == TaskPriority.high
+      ? PdfColors.red700
+      : priority == TaskPriority.medium
+          ? PdfColors.orange700
+          : PdfColors.grey500;
+
+  return pw.CustomPaint(
+    size: PdfPoint(size, size),
+    painter: (canvas, sz) {
+      final cx = sz.x / 2;
+      final cy = sz.y / 2;
+      final outer = sz.x / 2;
+      final inner = outer * 0.4;
+
+      canvas.saveContext();
+      canvas.setFillColor(color);
+      canvas.setStrokeColor(color);
+      canvas.setLineWidth(0.8);
+
+      // 构建 5 角星路径（10 个交替顶点）
+      for (var i = 0; i < 10; i++) {
+        final angle = -math.pi / 2 + i * math.pi / 5;
+        final r = i.isEven ? outer : inner;
+        final x = cx + r * math.cos(angle);
+        final y = cy + r * math.sin(angle);
+        if (i == 0) {
+          canvas.moveTo(x, y);
+        } else {
+          canvas.lineTo(x, y);
+        }
+      }
+      canvas.closePath();
+
+      // 实心星：填充；空心星：仅描边
+      if (isFilled) {
+        canvas.fillPath();
+      } else {
+        canvas.strokePath();
+      }
+      canvas.restoreContext();
+    },
   );
 }
 

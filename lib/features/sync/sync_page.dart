@@ -120,6 +120,15 @@ class _SyncPageState extends ConsumerState<SyncPage> {
                   label: const Text('立即同步'),
                 ),
                 const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: state.running
+                      ? null
+                      : () =>
+                          ref.read(syncControllerProvider.notifier).fullSync(),
+                  icon: const Icon(Icons.sync_problem),
+                  label: const Text('全量同步'),
+                ),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     Expanded(

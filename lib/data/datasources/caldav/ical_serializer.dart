@@ -163,14 +163,26 @@ class IcalSerializer {
 
   static _IcalProperty? _parseLine(String line) {
     if (line.isEmpty) return null;
-    var rest = line;
 
-    // 名字（可能带参数，如 DUE;TZID=...:value）
-    final colon = rest.indexOf(':');
+    // 查找第一个不在引号内的冒号（分隔属性名/参数与值）。
+    // 带参数的属性如 DUE;TZID="America/New_York":value，
+    // 参数值中可能包含冒号（如 TZID="/path:with:colon"），
+    // 需跳过引号内的冒号。
+    var inQuotes = false;
+    var colon = -1;
+    for (var i = 0; i < line.length; i++) {
+      final ch = line[i];
+      if (ch == '"') {
+        inQuotes = !inQuotes;
+      } else if (ch == ':' && !inQuotes) {
+        colon = i;
+        break;
+      }
+    }
     if (colon < 0) return null;
 
-    final nameAndParams = rest.substring(0, colon);
-    final value = rest.substring(colon + 1);
+    final nameAndParams = line.substring(0, colon);
+    final value = line.substring(colon + 1);
 
     final semi = nameAndParams.indexOf(';');
     final name = semi < 0 ? nameAndParams : nameAndParams.substring(0, semi);

@@ -4,24 +4,8 @@ import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
 
-/// 当前选中的日历 URL（null 表示全部）。
-final selectedCalendarProvider = StateProvider<String?>((ref) => null);
-
-/// 完成情况过滤。
-enum CompletionFilter { all, active, completed }
-
-final completionFilterProvider =
-    StateProvider<CompletionFilter>((ref) => CompletionFilter.all);
-
-/// 截止时间过滤范围。
-enum DueRange { anytime, today, thisWeek, thisMonth }
-
-final dueRangeProvider = StateProvider<DueRange>((ref) => DueRange.anytime);
-
 /// 排序方式。
 enum SortMode { manual, alphabetical, dueDate, edited }
-
-final sortModeProvider = StateProvider<SortMode>((ref) => SortMode.dueDate);
 
 /// 标签过滤后孤儿任务（父任务不在结果集中）的显示模式。
 enum OrphanDisplayMode {
@@ -36,9 +20,6 @@ final orphanDisplayModeProvider = StateProvider<OrphanDisplayMode>(
   (ref) => OrphanDisplayMode.tree,
 );
 
-/// 是否隐藏已完成。
-final hideCompletedProvider = StateProvider<bool>((ref) => false);
-
 /// 新建任务后自动进入标题编辑状态（一次性信号）。
 ///
 /// 设置为 true 后，详情页加载时将自动进入标题编辑模式；
@@ -48,11 +29,11 @@ final autoEditTitleProvider = StateProvider<bool>((ref) => false);
 /// 日期字段是否显示时间（默认只显示日期，可在系统配置中开启）。
 final showTimeInDateFieldProvider = StateProvider<bool>((ref) => false);
 
-/// 任务列表（按选中日历过滤，响应式）。
+/// 任务列表（所有任务，不过滤日历，响应式）。
+/// 各页面自行处理日历过滤逻辑，避免全局状态冲突。
 final taskListProvider = StreamProvider<List<Task>>((ref) {
   final repo = ref.watch(taskRepositoryProvider);
-  final cal = ref.watch(selectedCalendarProvider);
-  return repo.watchAll(calendarUrl: cal);
+  return repo.watchAll(calendarUrl: null);
 });
 
 /// 任务详情（单个任务）。

@@ -19,4 +19,7 @@ abstract class CalendarRepository {
 
   /// 启用 / 禁用某个日历的同步
   Future<void> setSyncEnabled(String url, bool enabled);
+
+  /// 清除所有日历的 syncToken，强制下一次 pull 走全量拉取。
+  Future<void> clearAllSyncTokens();
 }

@@ -26,6 +26,23 @@ class SyncRepositoryImpl implements SyncRepository {
   static const String _tag = 'Sync';
 
   @override
+  Future<SyncResult> fullSync({bool allDayDates = false}) async {
+    AppLogger.instance.i(_tag, '---- 开始全量同步 ----');
+    final pushResult = await push(allDayDates: allDayDates);
+    if (pushResult.error != null) {
+      AppLogger.instance.e(_tag, 'push 失败，中止全量同步（不执行 pull）');
+      return SyncResult(
+        uploaded: pushResult.uploaded,
+        deleted: pushResult.deleted,
+        error: pushResult.error,
+        finishedAt: DateTime.now().toUtc(),
+      );
+    }
+    // 直接全量拉取，不经过 sync-collection 增量逻辑
+    return _pullInternal(forceFullPull: true);
+  }
+
+  @override
   Future<SyncResult> sync({bool allDayDates = false}) async {
     AppLogger.instance.i(_tag, '==== 开始完整同步 ====');
     try {
@@ -168,8 +185,10 @@ class SyncRepositoryImpl implements SyncRepository {
   }
 
   @override
-  Future<SyncResult> pull() async {
-    AppLogger.instance.i(_tag, '---- 开始 pull ----');
+  Future<SyncResult> pull() => _pullInternal(forceFullPull: false);
+
+  Future<SyncResult> _pullInternal({required bool forceFullPull}) async {
+    AppLogger.instance.i(_tag, '---- 开始 pull ${forceFullPull ? "(全量)" : ""} ----');
     var downloaded = 0;
     var updated = 0;
     var deleted = 0;
@@ -190,6 +209,15 @@ class SyncRepositoryImpl implements SyncRepository {
         }
         processedCalendars++;
 
+        if (forceFullPull) {
+          // 全量同步：直接走 listVTodos 全量拉取，不使用 sync-collection
+          final counts = await _fullPullCalendar(cal);
+          downloaded += counts.downloaded;
+          deleted += counts.deleted;
+          updated++;
+          continue;
+        }
+
         // 优先使用 sync-collection 增量同步（RFC 6578）
         try {
           final result = await _client.syncCollection(
@@ -201,19 +229,9 @@ class SyncRepositoryImpl implements SyncRepository {
 
           // 处理新增/更新的任务
           for (final r in result.resources) {
-            if (r.icalData == null) continue;
-            final task = IcalSerializer.parseVTodo(
-              r.icalData!,
-              calendarUrl: cal.url,
-              href: r.href,
-              etag: r.etag,
-            );
-            if (task == null) {
-              AppLogger.instance.w(_tag, '解析失败: ${r.href}');
-              continue;
+            if (await _processRemoteResource(r, cal.url)) {
+              downloaded++;
             }
-            await _db.upsertTaskFromRemote(task);
-            downloaded++;
           }
 
           // 处理远端已删除的任务
@@ -273,19 +291,9 @@ class SyncRepositoryImpl implements SyncRepository {
     final remoteHrefs = <String>{};
     for (final r in remoteTasks) {
       remoteHrefs.add(r.href);
-      if (r.icalData == null) continue;
-      final task = IcalSerializer.parseVTodo(
-        r.icalData!,
-        calendarUrl: cal.url,
-        href: r.href,
-        etag: r.etag,
-      );
-      if (task == null) {
-        AppLogger.instance.w(_tag, '解析失败: ${r.href}');
-        continue;
+      if (await _processRemoteResource(r, cal.url)) {
+        downloaded++;
       }
-      await _db.upsertTaskFromRemote(task);
-      downloaded++;
     }
 
     // 删除远端已不存在的本地任务
@@ -311,6 +319,40 @@ class SyncRepositoryImpl implements SyncRepository {
     }
 
     return (downloaded: downloaded, deleted: deleted);
+  }
+
+  /// 处理单个远端资源：解析 iCal 数据并 upsert 到本地。
+  /// 若 icalData 为 null（部分服务器在 sync-collection/calendar-query 响应中
+  /// 不返回 calendar-data），则通过 GET 请求补取任务数据。
+  /// 返回是否成功处理。
+  Future<bool> _processRemoteResource(
+    DavTaskResource r,
+    String calendarUrl,
+  ) async {
+    var icalData = r.icalData;
+    if (icalData == null || icalData.isEmpty) {
+      try {
+        final fetched = await _client.getTask(r.href);
+        icalData = fetched.icalData;
+      } catch (e) {
+        AppLogger.instance.w(_tag, 'GET 补取失败: ${r.href}  $e');
+        return false;
+      }
+    }
+    if (icalData == null || icalData.isEmpty) return false;
+
+    final task = IcalSerializer.parseVTodo(
+      icalData,
+      calendarUrl: calendarUrl,
+      href: r.href,
+      etag: r.etag,
+    );
+    if (task == null) {
+      AppLogger.instance.w(_tag, '解析失败: ${r.href}');
+      return false;
+    }
+    await _db.upsertTaskFromRemote(task);
+    return true;
   }
 
   /// 任务资源的 HREF：`<calendarUrl>/<uid>.ics`

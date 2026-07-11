@@ -6,14 +6,13 @@ import '../features/calendars/calendars_page.dart';
 import '../features/diagnostics/diagnostics_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/sync/sync_page.dart';
-import '../features/tasks/my_work_page.dart';
 import '../features/tasks/task_detail_page.dart';
-import '../features/tasks/task_list_page.dart';
+import '../features/tasks/task_page.dart';
 
 /// 路由配置 Provider。
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
-    initialLocation: '/my-work',
+    initialLocation: '/tasks',
     routes: <RouteBase>[
       ShellRoute(
         builder: (context, state, child) => _AppScaffold(
@@ -22,14 +21,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         ),
         routes: [
           GoRoute(
-            path: '/my-work',
-            name: 'myWork',
-            builder: (context, state) => const MyWorkPage(),
-          ),
-          GoRoute(
             path: '/tasks',
             name: 'tasks',
-            builder: (context, state) => const TaskListPage(),
+            builder: (context, state) => const TaskPage(),
             routes: [
               GoRoute(
                 path: ':id',
@@ -132,8 +126,8 @@ class _AppScaffoldState extends State<_AppScaffold>
             selectedIndex: index,
             onDestinationSelected: (i) => context.go(_pathForIndex(i)),
             extended: MediaQuery.of(context).size.width > 1100,
-            minWidth: 56,
-            minExtendedWidth: 120,
+            minWidth: 36,
+            minExtendedWidth: 140,
             selectedLabelTextStyle: theme.textTheme.bodyLarge?.copyWith(
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -145,69 +139,28 @@ class _AppScaffoldState extends State<_AppScaffold>
             ),
             destinations: const [
               NavigationRailDestination(
-                icon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.work_outline),
-                ),
-                selectedIcon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.work),
-                ),
-                label: Text('当前'),
-              ),
-              NavigationRailDestination(
-                icon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.checklist_outlined),
-                ),
-                selectedIcon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.checklist),
-                ),
+                icon: Icon(Icons.checklist_outlined),
+                selectedIcon: Icon(Icons.checklist),
                 label: Text('任务'),
               ),
               NavigationRailDestination(
-                icon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.calendar_month_outlined),
-                ),
-                selectedIcon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.calendar_month),
-                ),
+                icon: Icon(Icons.calendar_month_outlined),
+                selectedIcon: Icon(Icons.calendar_month),
                 label: Text('日历'),
               ),
               NavigationRailDestination(
-                icon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.sync_outlined),
-                ),
-                selectedIcon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.sync),
-                ),
+                icon: Icon(Icons.sync_outlined),
+                selectedIcon: Icon(Icons.sync),
                 label: Text('同步'),
               ),
               NavigationRailDestination(
-                icon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.bug_report_outlined),
-                ),
-                selectedIcon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.bug_report),
-                ),
+                icon: Icon(Icons.bug_report_outlined),
+                selectedIcon: Icon(Icons.bug_report),
                 label: Text('诊断'),
               ),
               NavigationRailDestination(
-                icon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.settings_outlined),
-                ),
-                selectedIcon: Padding(
-                  padding: EdgeInsets.only(right: 8),
-                  child: Icon(Icons.settings),
-                ),
+                icon: Icon(Icons.settings_outlined),
+                selectedIcon: Icon(Icons.settings),
                 label: Text('设置'),
               ),
             ],
@@ -226,21 +179,20 @@ class _AppScaffoldState extends State<_AppScaffold>
   }
 
   int _selectedIndex(String location) {
-    if (location.startsWith('/my-work')) return 0;
-    if (location.startsWith('/tasks')) return 1;
-    if (location.startsWith('/calendars')) return 2;
-    if (location.startsWith('/sync')) return 3;
-    if (location.startsWith('/diagnostics')) return 4;
-    if (location.startsWith('/settings')) return 5;
+    if (location.startsWith('/tasks')) return 0;
+    if (location.startsWith('/calendars')) return 1;
+    if (location.startsWith('/sync')) return 2;
+    if (location.startsWith('/diagnostics')) return 3;
+    if (location.startsWith('/settings')) return 4;
     return 0;
   }
 
   String _pathForIndex(int i) => switch (i) {
-        0 => '/my-work',
-        2 => '/calendars',
-        3 => '/sync',
-        4 => '/diagnostics',
-        5 => '/settings',
+        0 => '/tasks',
+        1 => '/calendars',
+        2 => '/sync',
+        3 => '/diagnostics',
+        4 => '/settings',
         _ => '/tasks',
       };
 }

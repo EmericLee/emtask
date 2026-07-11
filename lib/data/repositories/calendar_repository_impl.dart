@@ -44,12 +44,15 @@ class CalendarRepositoryImpl implements CalendarRepository {
         supportsEvents: r.supportsVEvent,
         owner: r.owner ?? '',
         ctag: r.ctag,
-        syncToken: r.syncToken,
+        // 保留本地 syncToken：PROPFIND 返回的是当前状态令牌，
+        // 用它作为 sync-collection 的 "since" 参数会导致零变更返回。
+        // syncToken 只应由 sync-collection 响应更新。
+        syncToken: existing?.syncToken,
         syncEnabled: existing?.syncEnabled ?? true,
       );
       await _db.upsertCalendar(cal);
       AppLogger.instance.d(_tag,
-          '日历: ${cal.displayName}  url=$absoluteUrl  vtodo=${cal.supportsTasks}  sync=${cal.syncEnabled}');
+          '日历: ${cal.displayName}  url=$absoluteUrl  color=${cal.color}  vtodo=${cal.supportsTasks}  sync=${cal.syncEnabled}');
       result.add(cal);
     }
     return result;
@@ -61,6 +64,15 @@ class CalendarRepositoryImpl implements CalendarRepository {
   @override
   Future<void> setSyncEnabled(String url, bool enabled) =>
       _db.setCalendarSyncEnabled(url, enabled);
+
+  @override
+  Future<void> clearAllSyncTokens() async {
+    final calendars = await _db.getAllCalendars();
+    AppLogger.instance.i(_tag, '清除所有日历 syncToken: ${calendars.length} 个日历');
+    for (final cal in calendars) {
+      await _db.upsertCalendar(cal.copyWith(syncToken: null));
+    }
+  }
 
   /// 将 HREF 转换为绝对 URL。
   ///

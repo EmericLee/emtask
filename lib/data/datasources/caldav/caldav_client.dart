@@ -362,13 +362,14 @@ class CalDavClient {
 
   static String _propfindCalendarHomeBody() {
     return '''<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.org/ns/" xmlns:oc="http://owncloud.org/ns">
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.org/ns/" xmlns:oc="http://owncloud.org/ns/" xmlns:apple="http://apple.com/ns/ical/">
   <d:prop>
     <d:resourcetype/>
     <d:displayname/>
     <cs:getctag/>
     <d:sync-token/>
     <nc:color/>
+    <apple:calendar-color/>
     <oc:calendar-enabled/>
     <c:supported-calendar-component-set/>
     <d:owner/>
@@ -378,12 +379,13 @@ class CalDavClient {
 
   static String _propfindCalendarPropsBody() {
     return '''<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.org/ns/">
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.org/ns/" xmlns:apple="http://apple.com/ns/ical/">
   <d:prop>
     <d:displayname/>
     <cs:getctag/>
     <d:sync-token/>
     <nc:color/>
+    <apple:calendar-color/>
     <c:supported-calendar-component-set/>
   </d:prop>
 </d:propfind>''';
@@ -429,30 +431,44 @@ class CalDavClient {
       final href = _childText(response, 'href');
       if (href == null) continue;
 
-      final propstat = response.findElements('propstat', namespace: '*').firstOrNull;
-      if (propstat == null) continue;
+      // WebDAV 允许一个 response 包含多个 propstat（200 OK 和 404 Not Found），
+      // 遍历所有 propstat 合并属性，避免遗漏分散在不同 propstat 中的属性。
+      String? displayName;
+      String? ctag;
+      String? syncToken;
+      String? color;
+      String? owner;
+      bool isCalendar = false;
+      XmlElement? compSet;
 
-      final prop = propstat.findElements('prop', namespace: '*').firstOrNull;
-      if (prop == null) continue;
+      for (final propstat
+          in response.findElements('propstat', namespace: '*')) {
+        final prop = propstat.findElements('prop', namespace: '*').firstOrNull;
+        if (prop == null) continue;
 
-      final resourceType = prop.findElements('resourcetype', namespace: '*').firstOrNull;
-      // 仅处理日历集合（含 <collection/> 与 <calendar/>）
-      if (resourceType == null) continue;
-      final isCalendar = resourceType
-          .findElements('calendar', namespace: '*')
-          .isNotEmpty;
+        final resourceType =
+            prop.findElements('resourcetype', namespace: '*').firstOrNull;
+        if (resourceType != null && !isCalendar) {
+          isCalendar = resourceType
+              .findElements('calendar', namespace: '*')
+              .isNotEmpty;
+        }
+
+        displayName ??= _childText(prop, 'displayname');
+        ctag ??= _childText(prop, 'getctag');
+        syncToken ??= _childText(prop, 'sync-token');
+        // 优先 nc:color，回退 apple:calendar-color
+        color ??= _childText(prop, 'color') ??
+            _childText(prop, 'calendar-color');
+        owner ??= _childText(prop, 'owner');
+        compSet ??= prop
+            .findElements('supported-calendar-component-set', namespace: '*')
+            .firstOrNull;
+      }
+
+      // 仅处理日历集合
       if (!isCalendar) continue;
 
-      final displayName = _childText(prop, 'displayname') ?? '';
-      final ctag = _childText(prop, 'getctag');
-      final syncToken = _childText(prop, 'sync-token');
-      final color = _childText(prop, 'color');
-      final owner = _childText(prop, 'owner');
-
-      // supported-calendar-component-set 内的 comp 元素 name 属性
-      final compSet = prop
-          .findElements('supported-calendar-component-set', namespace: '*')
-          .firstOrNull;
       var supportsVTodo = false;
       var supportsVEvent = false;
       if (compSet != null) {
@@ -465,7 +481,7 @@ class CalDavClient {
 
       results.add(DavCalendarInfo(
         href: href,
-        displayName: displayName,
+        displayName: displayName ?? '',
         color: color,
         ctag: ctag,
         syncToken: syncToken,
@@ -487,13 +503,14 @@ class CalDavClient {
       if (href == null) continue;
 
       final propstat = response.findElements('propstat', namespace: '*').firstOrNull;
-      if (propstat == null) continue;
-
-      final prop = propstat.findElements('prop', namespace: '*').firstOrNull;
-      if (prop == null) continue;
-
-      final etag = _childText(prop, 'getetag');
-      final calendarData = _childText(prop, 'calendar-data');
+      final prop = propstat?.findElements('prop', namespace: '*').firstOrNull;
+      // 即使 prop/stat 为 null 也纳入资源（icalData 为 null 时由调用方 GET 补取）
+      String? etag;
+      String? calendarData;
+      if (prop != null) {
+        etag = _childText(prop, 'getetag');
+        calendarData = _childText(prop, 'calendar-data');
+      }
 
       results.add(DavTaskResource(
         href: href,
@@ -522,17 +539,19 @@ class CalDavClient {
 
       final propstat = response.findElements('propstat', namespace: '*').firstOrNull;
       if (propstat != null) {
-        // 新增/更新的资源
+        // 新增/更新的资源（即使 prop 为 null 也纳入，由调用方 GET 补取）
         final prop = propstat.findElements('prop', namespace: '*').firstOrNull;
+        String? etag;
+        String? calendarData;
         if (prop != null) {
-          final etag = _childText(prop, 'getetag');
-          final calendarData = _childText(prop, 'calendar-data');
-          resources.add(DavTaskResource(
-            href: href,
-            etag: etag,
-            icalData: calendarData,
-          ));
+          etag = _childText(prop, 'getetag');
+          calendarData = _childText(prop, 'calendar-data');
         }
+        resources.add(DavTaskResource(
+          href: href,
+          etag: etag,
+          icalData: calendarData,
+        ));
       } else {
         // 无 propstat，检查是否有 404 状态（删除的资源）
         final status = _childText(response, 'status');

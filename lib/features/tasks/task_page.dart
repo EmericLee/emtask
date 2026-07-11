@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -38,20 +39,77 @@ class _PdfData {
   });
 }
 
-/// 已隐藏完成任务的小时数（可配置，默认 24 小时）。
-final _hideCompletedHoursProvider = StateProvider<int>((ref) => 24);
+/// 已完成任务的显示范围（默认不显示）。
+enum _CompletedRange {
+  off, // 不显示已完成
+  day1, // 1 天
+  day3, // 3 天
+  day7, // 7 天
+  month1, // 1 月
+  year1, // 1 年
+  currentYear, // 当年
+}
 
-/// “当前”页面专用排序方式（默认手动排序，同步 Nextcloud sortOrder）。
+final _completedRangeProvider =
+    StateProvider<_CompletedRange>((ref) => _CompletedRange.off);
+
+/// 任务页面专用排序方式（默认手动排序，同步 Nextcloud sortOrder）。
 final _currentSortModeProvider = StateProvider<SortMode>((ref) => SortMode.manual);
 
-/// 调试开关：是否在列表中显示每个任务的 sortOrder。
-final _debugSortOrderProvider = StateProvider<bool>((ref) => false);
+/// 任务视图模式：当前（关注）/ 全部 / 完成。
+enum _TaskViewMode {
+  /// 重要：设置了优先级的、或截止日期在当前及之前的所有任务
+  important,
+  /// 当前：截止日期在配置天数内、或设了优先级、或进行中的任务
+  current,
+  /// 全部：所有任务（根据开关决定是否显示已完成）
+  all,
+  /// 完成：包含所有任务（含已完成）
+  completed,
+}
+
+/// 任务页视图模式。
+final _taskViewModeProvider =
+    StateProvider<_TaskViewMode>((ref) => _TaskViewMode.current);
+
+/// "当前"视图的时间范围（天）：截止日期在未来多少天内的任务会被纳入。
+final _currentViewDaysProvider = StateProvider<int>((ref) => 7);
+
+/// 是否显示任务条扩展属性行（创建/修改/完成时间等）。
+final _showExtendedAttrProvider = StateProvider<bool>((ref) => false);
+
+/// 三点菜单项枚举
+enum _OptionMenu {
+  showExtendedAttr,
+  currentViewDays,
+  completedRange,
+}
+
+/// 任务页配置是否已从 SharedPreferences 加载（防止重复初始化）。
+bool _taskPageSettingsLoaded = false;
 
 /// 日历 URL 到显示名称的映射。
 final _calendarNameMapProvider = FutureProvider<Map<String, String>>((ref) async {
   final repo = ref.watch(calendarRepositoryProvider);
   final calendars = await repo.getAll();
   return {for (final c in calendars) c.url: c.displayName};
+});
+
+/// 已启用同步的日历列表（含名称与颜色），用于清单过滤菜单。
+final _syncedCalendarListProvider =
+    FutureProvider<List<({String url, String name, Color color})>>(
+        (ref) async {
+  final repo = ref.watch(calendarRepositoryProvider);
+  final calendars = await repo.getAll();
+  return [
+    for (final c in calendars)
+      if (c.syncEnabled)
+        (
+          url: c.url,
+          name: c.displayName,
+          color: _parseCalendarColor(c.color),
+        ),
+  ];
 });
 
 /// 日历 URL 到颜色的映射。
@@ -69,47 +127,106 @@ final _selectedTagProvider = StateProvider<String?>((ref) => '__all__');
 /// 当前选中的清单过滤（null 表示不过滤）。
 final _selectedCalendarProvider = StateProvider<String?>((ref) => null);
 
-/// 当前过滤条件下可用的标签集合（派生自任务列表与隐藏时长，自动重算）。
+/// 当前过滤条件下可用的标签集合（派生自任务列表，自动重算）。
 final _availableTagsProvider = Provider<Set<String>>((ref) {
   final tasksAsync = ref.watch(taskListProvider);
-  final hideHours = ref.watch(_hideCompletedHoursProvider);
+  final completedRange = ref.watch(_completedRangeProvider);
   final tasks = tasksAsync.valueOrNull ?? const <Task>[];
-  final now = DateTime.now().toUtc();
-  final cutoff = now.subtract(Duration(hours: hideHours));
   final tags = <String>{};
   for (final t in tasks) {
     if (t.deleted) continue;
-    if (t.isCompleted && t.completed != null && t.completed!.isBefore(cutoff)) {
-      continue;
-    }
+    if (completedRange == _CompletedRange.off && t.isCompleted) continue;
     tags.addAll(t.categories);
   }
   return tags;
 });
 
-/// “当前”树形任务列表页，按日历分组展示。
+/// 任务列表页，按日历分组展示。
 ///
 /// 采用扁平化条目设计：白色背景、默认全部展开、悬停显示完成按钮、
 /// 右侧标签/日期/更多/星标，贴合政务办公类任务清单风格。
-class MyWorkPage extends ConsumerWidget {
-  const MyWorkPage({super.key});
+class TaskPage extends ConsumerWidget {
+  const TaskPage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tasksAsync = ref.watch(taskListProvider);
     final calendarNamesAsync = ref.watch(_calendarNameMapProvider);
     final calendarColorsAsync = ref.watch(_calendarColorMapProvider);
-    final hideHours = ref.watch(_hideCompletedHoursProvider);
+    final completedRange = ref.watch(_completedRangeProvider);
+    final viewMode = ref.watch(_taskViewModeProvider);
+    final currentViewDays = ref.watch(_currentViewDaysProvider);
     final sortMode = ref.watch(_currentSortModeProvider);
     final selectedTag = ref.watch(_selectedTagProvider);
     final selectedCalendar = ref.watch(_selectedCalendarProvider);
-    final debugSort = ref.watch(_debugSortOrderProvider);
     final availableTags = ref.watch(_availableTagsProvider);
+    final showExtendedAttr = ref.watch(_showExtendedAttrProvider);
     final orphanMode = ref.watch(orphanDisplayModeProvider);
     final syncState = ref.watch(syncControllerProvider);
     final pendingCount = ref.watch(pendingSyncCountProvider).valueOrNull ?? 0;
     final isWide = MediaQuery.of(context).size.width > _wideScreenThreshold;
     final selectedTaskId = ref.watch(selectedTaskIdProvider);
+
+    // 从 SharedPreferences 加载已保存的配置并设置自动保存监听
+    final prefs = ref.watch(sharedPreferencesProvider).valueOrNull;
+
+    // 首次加载时恢复已保存的配置（延迟到帧结束后执行，避免在 build 中修改 provider）
+    if (prefs != null && !_taskPageSettingsLoaded) {
+      _taskPageSettingsLoaded = true;
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        final vmIdx = prefs.getInt('task_viewMode');
+        if (vmIdx != null && vmIdx < _TaskViewMode.values.length) {
+          ref.read(_taskViewModeProvider.notifier).state =
+              _TaskViewMode.values[vmIdx];
+        }
+        final smIdx = prefs.getInt('task_sortMode');
+        if (smIdx != null && smIdx < SortMode.values.length) {
+          ref.read(_currentSortModeProvider.notifier).state =
+              SortMode.values[smIdx];
+        }
+        final cal = prefs.getString('task_selectedCalendar');
+        if (cal != null) ref.read(_selectedCalendarProvider.notifier).state = cal;
+        final tag = prefs.getString('task_selectedTag');
+        if (tag != null) ref.read(_selectedTagProvider.notifier).state = tag;
+        final days = prefs.getInt('task_currentViewDays');
+        if (days != null) ref.read(_currentViewDaysProvider.notifier).state = days;
+        final crIdx = prefs.getInt('task_completedRange');
+        if (crIdx != null && crIdx < _CompletedRange.values.length) {
+          ref.read(_completedRangeProvider.notifier).state =
+              _CompletedRange.values[crIdx];
+        }
+        final showAttr = prefs.getBool('task_showExtendedAttr');
+        if (showAttr != null) {
+          ref.read(_showExtendedAttrProvider.notifier).state = showAttr;
+        }
+      });
+    }
+
+    // 自动保存监听（始终注册，prefs 为 null 时跳过）
+    ref.listen(_taskViewModeProvider,
+        (_, v) => prefs?.setInt('task_viewMode', v.index));
+    ref.listen(_currentSortModeProvider,
+        (_, v) => prefs?.setInt('task_sortMode', v.index));
+    ref.listen(_selectedCalendarProvider, (_, v) {
+      if (v != null) {
+        prefs?.setString('task_selectedCalendar', v);
+      } else {
+        prefs?.remove('task_selectedCalendar');
+      }
+    });
+    ref.listen(_selectedTagProvider, (_, v) {
+      if (v != null) {
+        prefs?.setString('task_selectedTag', v);
+      } else {
+        prefs?.remove('task_selectedTag');
+      }
+    });
+    ref.listen(_currentViewDaysProvider,
+        (_, v) => prefs?.setInt('task_currentViewDays', v));
+    ref.listen(_completedRangeProvider,
+        (_, v) => prefs?.setInt('task_completedRange', v.index));
+    ref.listen(_showExtendedAttrProvider,
+        (_, v) => prefs?.setBool('task_showExtendedAttr', v));
 
     // 执行同步并显示结果提示
     Future<void> doSync() async {
@@ -154,12 +271,17 @@ class MyWorkPage extends ConsumerWidget {
           ref.read(_calendarNameMapProvider).valueOrNull ?? {};
       final calendarColors =
           ref.read(_calendarColorMapProvider).valueOrNull ?? {};
-      final hideHoursNow = ref.read(_hideCompletedHoursProvider);
+      final completedRangeNow = ref.read(_completedRangeProvider);
+      final viewModeNow = ref.read(_taskViewModeProvider);
+      final currentViewDaysNow = ref.read(_currentViewDaysProvider);
       final sortModeNow = ref.read(_currentSortModeProvider);
       final selectedTagNow = ref.read(_selectedTagProvider);
       final orphanModeNow = ref.read(orphanDisplayModeProvider);
 
-      final visibleTasks = _applyFilters(tasks, hideHours: hideHoursNow);
+      final visibleTasks = _applyViewFilters(tasks,
+          completedRange: completedRangeNow,
+          viewMode: viewModeNow,
+          currentViewDays: currentViewDaysNow);
       final selectedCalendarNow = ref.read(_selectedCalendarProvider);
       final pdfTasks = selectedCalendarNow != null
           ? visibleTasks
@@ -215,7 +337,7 @@ class MyWorkPage extends ConsumerWidget {
           allTasks: data.allTasks,
         );
         final fileName =
-            '当前任务清单_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.pdf';
+            '任务清单_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.pdf';
 
         // 尝试弹出系统保存对话框；Linux 上可能缺少 zenity 等依赖，失败时回退到 ~/Downloads。
         String? savePath;
@@ -242,7 +364,22 @@ class MyWorkPage extends ConsumerWidget {
         await file.writeAsBytes(bytes);
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('已保存：$savePath')),
+            SnackBar(
+              content: Text('已保存：$savePath'),
+              duration: const Duration(seconds: 10),
+              action: SnackBarAction(
+                label: '打开',
+                onPressed: () {
+                  if (Platform.isWindows) {
+                    Process.run('cmd', ['/c', 'start', '', savePath!]);
+                  } else if (Platform.isMacOS) {
+                    Process.run('open', [savePath!]);
+                  } else {
+                    Process.run('xdg-open', [savePath!]);
+                  }
+                },
+              ),
+            ),
           );
         }
       } catch (e) {
@@ -262,17 +399,23 @@ class MyWorkPage extends ConsumerWidget {
         title: const Row(
           children: [
             Icon(
-              Icons.work_outline,
+              Icons.checklist_outlined,
               size: 32,
             ),
             SizedBox(width: 10),
-            Text('当前'),
+            Text('任务'),
           ],
         ),
         actions: [
-          // 按清单过滤
+          // 视图切换：当前 / 全部 / 完成
+          _ViewModeSwitch(
+            current: viewMode,
+            onSelected: (m) =>
+                ref.read(_taskViewModeProvider.notifier).state = m,
+          ),
+          // 按清单过滤（仅显示已启用同步的清单）
           _CalendarFilterMenu(
-            calendarsAsync: calendarNamesAsync,
+            syncedCalendarsAsync: ref.watch(_syncedCalendarListProvider),
             selected: selectedCalendar,
             onSelected: (url) =>
                 ref.read(_selectedCalendarProvider.notifier).state = url,
@@ -288,20 +431,6 @@ class MyWorkPage extends ConsumerWidget {
             selectedTag: selectedTag,
             onSelected: (tag) => ref.read(_selectedTagProvider.notifier).state = tag,
           ),
-          // 隐藏时长快速设置
-          _HideHoursMenu(
-            current: hideHours,
-            onSelected: (h) => ref.read(_hideCompletedHoursProvider.notifier).state = h,
-          ),
-          // sortOrder 调试开关
-          IconButton(
-            tooltip: '显示/隐藏排序值',
-            icon: Icon(
-              debugSort ? Icons.code : Icons.code_off,
-              color: debugSort ? Colors.blue : null,
-            ),
-            onPressed: () => ref.read(_debugSortOrderProvider.notifier).state = !debugSort,
-          ),
           // 导出 PDF
           IconButton(
             tooltip: '导出 PDF 文件',
@@ -314,6 +443,40 @@ class MyWorkPage extends ConsumerWidget {
             pendingCount: pendingCount,
             onPressed: doSync,
           ),
+          // 更多选项：显示扩展属性、当前视图时间范围、显示完成的任务
+          Builder(builder: (buttonContext) {
+            return PopupMenuButton<_OptionMenu>(
+              tooltip: '更多选项',
+              icon: const Icon(Icons.more_vert),
+              onSelected: (item) {
+                switch (item) {
+                  case _OptionMenu.showExtendedAttr:
+                    ref.read(_showExtendedAttrProvider.notifier).state =
+                        !showExtendedAttr;
+                  case _OptionMenu.currentViewDays:
+                    _showViewDaysPopup(buttonContext, ref, currentViewDays);
+                  case _OptionMenu.completedRange:
+                    _showCompletedRangePopup(buttonContext, ref, completedRange);
+                }
+              },
+              itemBuilder: (ctx) => [
+                CheckedPopupMenuItem<_OptionMenu>(
+                  value: _OptionMenu.showExtendedAttr,
+                  checked: showExtendedAttr,
+                  child: const Text('显示扩展属性'),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem<_OptionMenu>(
+                  value: _OptionMenu.currentViewDays,
+                  child: Text('当前视图时间范围…'),
+                ),
+                const PopupMenuItem<_OptionMenu>(
+                  value: _OptionMenu.completedRange,
+                  child: Text('显示完成的任务…'),
+                ),
+              ],
+            );
+          }),
         ],
       ),
       body: _buildBody(
@@ -322,11 +485,12 @@ class MyWorkPage extends ConsumerWidget {
         tasksAsync: tasksAsync,
         calendarNamesAsync: calendarNamesAsync,
         calendarColorsAsync: calendarColorsAsync,
-        hideHours: hideHours,
+        completedRange: completedRange,
+        viewMode: viewMode,
+        currentViewDays: currentViewDays,
         sortMode: sortMode,
         selectedTag: selectedTag,
         selectedCalendar: selectedCalendar,
-        debugSort: debugSort,
         orphanMode: orphanMode,
         isWide: isWide,
         selectedTaskId: selectedTaskId,
@@ -341,11 +505,12 @@ class MyWorkPage extends ConsumerWidget {
     required AsyncValue<List<Task>> tasksAsync,
     required AsyncValue<Map<String, String>> calendarNamesAsync,
     required AsyncValue<Map<String, Color>> calendarColorsAsync,
-    required int hideHours,
+    required _CompletedRange completedRange,
+    required _TaskViewMode viewMode,
+    required int currentViewDays,
     required SortMode sortMode,
     required String? selectedTag,
     required String? selectedCalendar,
-    required bool debugSort,
     required OrphanDisplayMode orphanMode,
     required bool isWide,
     required int? selectedTaskId,
@@ -360,7 +525,8 @@ class MyWorkPage extends ConsumerWidget {
       data: (tasks) {
         final calendarNames = calendarNamesAsync.valueOrNull ?? {};
         final calendarColors = calendarColorsAsync.valueOrNull ?? {};
-        var visibleTasks = _applyFilters(tasks, hideHours: hideHours);
+        var visibleTasks = _applyViewFilters(tasks,
+            completedRange: completedRange, viewMode: viewMode, currentViewDays: currentViewDays);
         if (selectedCalendar != null) {
           visibleTasks = visibleTasks
               .where((t) => t.calendarUrl == selectedCalendar)
@@ -383,13 +549,12 @@ class MyWorkPage extends ConsumerWidget {
           return const _EmptyState(
             icon: Icons.work_outline,
             title: '暂无任务',
-            message: '当前没有待办任务',
+            message: '暂没有待办任务',
           );
         }
         return _CurrentTaskList(
           groups: groups,
           calendarColors: calendarColors,
-          debugSortOrder: debugSort,
           orphanMode: orphanMode,
           allTasks: visibleTasks,
           isWide: isWide,
@@ -408,17 +573,82 @@ class MyWorkPage extends ConsumerWidget {
     );
   }
 
-  /// 过滤：移除已删除任务，以及已完成超过指定小时数的任务。
-  List<Task> _applyFilters(List<Task> tasks, {required int hideHours}) {
+  /// 过滤：移除已删除任务，根据时间范围决定是否显示已完成任务。
+  List<Task> _applyFilters(List<Task> tasks,
+      {required _CompletedRange completedRange}) {
     final now = DateTime.now().toUtc();
-    final cutoff = now.subtract(Duration(hours: hideHours));
+    DateTime? cutoff;
+    switch (completedRange) {
+      case _CompletedRange.off:
+        break;
+      case _CompletedRange.day1:
+        cutoff = now.subtract(const Duration(days: 1));
+      case _CompletedRange.day3:
+        cutoff = now.subtract(const Duration(days: 3));
+      case _CompletedRange.day7:
+        cutoff = now.subtract(const Duration(days: 7));
+      case _CompletedRange.month1:
+        cutoff = now.subtract(const Duration(days: 30));
+      case _CompletedRange.year1:
+        cutoff = now.subtract(const Duration(days: 365));
+      case _CompletedRange.currentYear:
+        cutoff = DateTime(now.year, 1, 1).toUtc();
+    }
     return tasks.where((t) {
       if (t.deleted) return false;
-      if (t.isCompleted && t.completed != null && t.completed!.isBefore(cutoff)) {
-        return false;
+      if (t.isCompleted) {
+        if (completedRange == _CompletedRange.off) return false;
+        if (cutoff != null) {
+          final completed = t.completed ?? t.lastModified ?? t.created;
+          if (completed == null || completed.isBefore(cutoff)) return false;
+        }
       }
       return true;
     }).toList();
+  }
+
+  /// 按视图模式过滤任务。
+  /// - [current]：截止 [currentViewDays] 天内、或设了优先级、或进行中的任务
+  /// - [all]：所有任务（根据开关决定是否显示已完成）
+  /// - [completed]：包含所有任务（含已完成，仅排除已删除）
+  List<Task> _applyViewFilters(
+    List<Task> tasks, {
+    required _CompletedRange completedRange,
+    required _TaskViewMode viewMode,
+    required int currentViewDays,
+  }) {
+    switch (viewMode) {
+      case _TaskViewMode.important:
+        final base = _applyFilters(tasks, completedRange: completedRange);
+        final now = DateTime.now().toUtc();
+        final matched = base.where((t) {
+          // 设置了优先级
+          if (t.priority != TaskPriority.none) return true;
+          // 截止日期在当前及之前
+          if (t.due != null && !t.due!.isAfter(now)) return true;
+          return false;
+        }).toList();
+        return _withAncestors(matched, allTasks: base);
+      case _TaskViewMode.current:
+        final base = _applyFilters(tasks, completedRange: completedRange);
+        final now = DateTime.now().toUtc();
+        final dueCutoff = now.add(Duration(days: currentViewDays));
+        final matched = base.where((t) {
+          // 截止日期在配置天数内
+          if (t.due != null && t.due!.isBefore(dueCutoff)) return true;
+          // 设置了优先级
+          if (t.priority != TaskPriority.none) return true;
+          // 状态为进行中
+          if (t.status == TaskStatus.inProcess) return true;
+          return false;
+        }).toList();
+        // 符合条件任务的父任务链一并显示
+        return _withAncestors(matched, allTasks: base);
+      case _TaskViewMode.all:
+        return _applyFilters(tasks, completedRange: completedRange);
+      case _TaskViewMode.completed:
+        return tasks.where((t) => !t.deleted).toList();
+    }
   }
 
   /// 树状模式：向上追溯父任务链，把匹配任务及其所有祖先都包含进来。
@@ -522,6 +752,80 @@ Color _parseCalendarColor(String hex) {
   }
 }
 
+/// 视图模式切换：当前 / 全部 / 完成。
+class _ViewModeSwitch extends StatelessWidget {
+  const _ViewModeSwitch({
+    required this.current,
+    required this.onSelected,
+  });
+
+  final _TaskViewMode current;
+  final ValueChanged<_TaskViewMode> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return PopupMenuButton<_TaskViewMode>(
+      tooltip: '视图模式',
+      onSelected: onSelected,
+      initialValue: current,
+      padding: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _icon(current),
+              size: 18,
+              color: scheme.primary,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              _label(current),
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.primary,
+              ),
+            ),
+          ],
+        ),
+      ),
+      itemBuilder: (context) => _TaskViewMode.values.map((m) {
+        return PopupMenuItem<_TaskViewMode>(
+          value: m,
+          child: Row(
+            children: [
+              Icon(_icon(m), size: 16, color: scheme.outline),
+              const SizedBox(width: 8),
+              Text(_label(m)),
+              if (m == current)
+                Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Icon(Icons.check, size: 14, color: scheme.primary),
+                ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  static IconData _icon(_TaskViewMode m) => switch (m) {
+        _TaskViewMode.important => Icons.star_outlined,
+        _TaskViewMode.current => Icons.inbox_outlined,
+        _TaskViewMode.all => Icons.list_outlined,
+        _TaskViewMode.completed => Icons.task_alt,
+      };
+
+  static String _label(_TaskViewMode m) => switch (m) {
+        _TaskViewMode.important => '重要',
+        _TaskViewMode.current => '当前',
+        _TaskViewMode.all => '全部',
+        _TaskViewMode.completed => '完成',
+      };
+}
+
 /// 排序方式下拉菜单。
 class _SortModeMenu extends StatelessWidget {
   const _SortModeMenu({
@@ -571,86 +875,162 @@ class _SortModeMenu extends StatelessWidget {
     );
   }
 }
-
-/// 隐藏时长下拉菜单。
-class _HideHoursMenu extends StatelessWidget {
-  const _HideHoursMenu({
-    required this.current,
-    required this.onSelected,
-  });
-
-  final int current;
-  final ValueChanged<int> onSelected;
-
-  String _label(int hours) {
-    if (hours < 24) return '$hours 小时';
-    if (hours == 24) return '1 天';
-    if (hours == 24 * 7) return '1 周';
-    if (hours == 24 * 30) return '1 月';
-    return '$hours 小时';
+/// 弹出"当前视图时间范围"子菜单
+void _showViewDaysPopup(
+    BuildContext context, WidgetRef ref, int current) {
+  final theme = Theme.of(context);
+  const options = [1, 3, 7, 14, 30, 90];
+  String label(int d) {
+    if (d == 1) return '1 天';
+    if (d == 7) return '1 周';
+    if (d == 30) return '1 月';
+    if (d == 90) return '3 月';
+    return '$d 天';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return PopupMenuButton<int>(
-      tooltip: '隐藏已完成时长',
-      initialValue: current,
-      onSelected: onSelected,
-      itemBuilder: (context) => [1, 6, 12, 24, 24 * 7, 24 * 30]
-          .map((h) => PopupMenuItem(
-                value: h,
-                child: Text('隐藏已完成超过 ${_label(h)}'),
-              ))
-          .toList(),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.filter_list, size: 20, color: theme.colorScheme.outline),
-            const SizedBox(width: 4),
-            Text(
-              '隐藏>${_label(current)}',
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.outline,
+  final RenderBox button = context.findRenderObject() as RenderBox;
+  final RenderBox overlay =
+      Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+  final RelativeRect position = RelativeRect.fromRect(
+    Rect.fromPoints(
+      button.localToGlobal(Offset.zero, ancestor: overlay),
+      button.localToGlobal(button.size.bottomRight(Offset.zero),
+          ancestor: overlay),
+    ),
+    Offset.zero & overlay.size,
+  );
+
+  showMenu<int>(
+    context: context,
+    position: position,
+    initialValue: current,
+    items: options
+        .map((d) => PopupMenuItem(
+              value: d,
+              child: Row(
+                children: [
+                  if (d == current)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(Icons.check,
+                          size: 14, color: theme.colorScheme.primary),
+                    ),
+                  Text('截止 ${label(d)} 内'),
+                ],
               ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+            ))
+        .toList(),
+  ).then((d) {
+    if (d != null) ref.read(_currentViewDaysProvider.notifier).state = d;
+  });
 }
 
-/// 按清单（日历）过滤下拉菜单。
+/// 弹出"显示完成的任务"时间范围子菜单
+void _showCompletedRangePopup(
+    BuildContext context, WidgetRef ref, _CompletedRange current) {
+  final theme = Theme.of(context);
+  const options = _CompletedRange.values;
+  String label(_CompletedRange r) {
+    switch (r) {
+      case _CompletedRange.off:
+        return '不显示';
+      case _CompletedRange.day1:
+        return '1 天';
+      case _CompletedRange.day3:
+        return '3 天';
+      case _CompletedRange.day7:
+        return '7 天';
+      case _CompletedRange.month1:
+        return '1 月';
+      case _CompletedRange.year1:
+        return '1 年';
+      case _CompletedRange.currentYear:
+        return '当年';
+    }
+  }
+
+  final RenderBox button = context.findRenderObject() as RenderBox;
+  final RenderBox overlay =
+      Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+  final RelativeRect position = RelativeRect.fromRect(
+    Rect.fromPoints(
+      button.localToGlobal(Offset.zero, ancestor: overlay),
+      button.localToGlobal(button.size.bottomRight(Offset.zero),
+          ancestor: overlay),
+    ),
+    Offset.zero & overlay.size,
+  );
+
+  showMenu<_CompletedRange>(
+    context: context,
+    position: position,
+    initialValue: current,
+    items: options
+        .map((r) => PopupMenuItem(
+              value: r,
+              child: Row(
+                children: [
+                  if (r == current)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(Icons.check,
+                          size: 14, color: theme.colorScheme.primary),
+                    ),
+                  Text(label(r)),
+                ],
+              ),
+            ))
+        .toList(),
+  ).then((r) {
+    if (r != null) ref.read(_completedRangeProvider.notifier).state = r;
+  });
+}
+
+/// 按清单（日历）过滤下拉菜单，仅显示已启用同步的清单并带颜色圆点。
 class _CalendarFilterMenu extends StatelessWidget {
   const _CalendarFilterMenu({
-    required this.calendarsAsync,
+    required this.syncedCalendarsAsync,
     required this.selected,
     required this.onSelected,
   });
 
-  final AsyncValue<Map<String, String>> calendarsAsync;
+  final AsyncValue<List<({String url, String name, Color color})>>
+      syncedCalendarsAsync;
   final String? selected;
   final ValueChanged<String?> onSelected;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final map = calendarsAsync.valueOrNull ?? {};
+    final list = syncedCalendarsAsync.valueOrNull ?? [];
     final isAll = selected == null;
-    final selectedName = isAll ? null : (map[selected] ?? selected);
+    final selectedCal = isAll
+        ? null
+        : list.where((c) => c.url == selected).firstOrNull;
+    final selectedName = selectedCal?.name;
 
     final items = <PopupMenuEntry<String?>>[
       const PopupMenuItem<String?>(
         value: null,
         child: Text('全部清单'),
       ),
-      if (map.isNotEmpty) const PopupMenuDivider(),
-      ...map.entries.map((e) => PopupMenuItem<String?>(
-            value: e.key,
-            child: Text(e.value),
+      if (list.isNotEmpty) const PopupMenuDivider(),
+      ...list.map((c) => PopupMenuItem<String?>(
+            value: c.url,
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: c.color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(c.name),
+              ],
+            ),
           )),
     ];
 
@@ -664,6 +1044,16 @@ class _CalendarFilterMenu extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (!isAll && selectedCal != null)
+              Container(
+                width: 10,
+                height: 10,
+                margin: const EdgeInsets.only(right: 4),
+                decoration: BoxDecoration(
+                  color: selectedCal.color,
+                  shape: BoxShape.circle,
+                ),
+              ),
             Icon(
               Icons.filter_list_outlined,
               size: 20,
@@ -814,7 +1204,6 @@ class _CurrentTaskList extends ConsumerStatefulWidget {
   const _CurrentTaskList({
     required this.groups,
     required this.calendarColors,
-    required this.debugSortOrder,
     required this.orphanMode,
     required this.allTasks,
     this.isWide = false,
@@ -822,7 +1211,6 @@ class _CurrentTaskList extends ConsumerStatefulWidget {
 
   final Map<String, List<Task>> groups;
   final Map<String, Color> calendarColors;
-  final bool debugSortOrder;
   final OrphanDisplayMode orphanMode;
   final List<Task> allTasks;
   final bool isWide;
@@ -858,6 +1246,8 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   Set<String>? _dragBlockUids;
   /// 起手时指针相对块顶部的偏移（用于浮动预览定位）。
   Offset? _dragBlockOffset;
+  /// 起手时指针全局 X（深度判定的 0 轴）。
+  double? _dragStartGlobalX;
   /// 当前指针全局位置。
   Offset? _dragPointerPos;
   /// 在剩余列表中的插入索引。
@@ -869,7 +1259,22 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   /// 每个任务 UID 对应的 GlobalKey（用于计算落点位置）。
   final Map<String, GlobalKey> _tileKeys = {};
 
+  // ================ 拖拽时的自动滚动 ================
+  /// ListView 视口的 GlobalKey（用于获取视口全局边界，触发边缘自动滚动）。
+  final GlobalKey _scrollViewportKey = GlobalKey();
+  /// 自动滚动定时器：指针停留在视口顶/底边缘时按帧滚动列表。
+  Timer? _autoScrollTimer;
+  /// 自动滚动方向：-1 向上、1 向下、0 不滚。
+  double _autoScrollDir = 0;
+  /// 触发自动滚动的边缘距离（指针距视口顶/底多少像素内开始滚）。
+  static const double _autoScrollEdge = 64.0;
+  /// 每帧自动滚动像素数。
+  static const double _autoScrollSpeed = 8.0;
+
   // ================ 乐观更新（落点即生效，避免刷新回退闪烁） ================
+  /// 退出中任务：因编辑导致不再满足过滤条件，临时保留做高亮渐隐动画。
+  final Map<String, _ExitingTaskInfo> _exitingTasks = {};
+
   /// 乐观覆盖的扁平列表（落点后立即显示的目标位置/深度）。
   List<_FlatNode>? _optimisticFlat;
   /// 乐观覆盖对应的日历分组 key。
@@ -891,12 +1296,73 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   @override
   void didUpdateWidget(covariant _CurrentTaskList oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 数据刷新后保持新节点展开。
-    for (final tasks in widget.groups.values) {
-      _expandAll(tasks);
+    // 仅展开"新出现"的父节点：保留用户手动折叠的状态，
+    // 同时让同步新增的带子任务节点默认展开。
+    // 注意：点击其他任务条、拖拽落点等触发的重建不应改变展开状态。
+    final oldUids = <String>{};
+    for (final tasks in oldWidget.groups.values) {
+      for (final t in tasks) {
+        oldUids.add(t.uid);
+      }
     }
+    for (final tasks in widget.groups.values) {
+      final tree = _WorkTaskTree(tasks);
+      void expandNew(List<Task> nodes) {
+        for (final t in nodes) {
+          final children = tree.childrenOf(t.uid);
+          if (children.isNotEmpty) {
+            if (!oldUids.contains(t.uid)) {
+              _expanded.add(t.uid);
+            }
+            expandNew(children);
+          }
+        }
+      }
+      expandNew(tree.roots);
+    }
+    // 检测因编辑被过滤掉的任务，加入退出动画队列。
+    _detectExitingTasks(oldWidget);
     // 检查乐观更新是否已被 provider 完全反映（移动任务落到目标位置与深度）。
     _maybeClearOptimistic();
+  }
+
+  /// 检测旧列表中存在但新列表中消失的任务，加入退出动画队列。
+  /// 每个退出任务记录其前一个任务的 UID，用于在渲染时确定插入位置。
+  void _detectExitingTasks(covariant _CurrentTaskList oldWidget) {
+    // 构建旧扁平列表 UID → info 映射，同时记录 prevUid（前一个任务的 UID）
+    final oldMap = <String, _ExitingTaskInfo>{};
+    for (final entry in oldWidget.groups.entries) {
+      final tree =
+          _WorkTaskTree(entry.value, allTasks: oldWidget.allTasks);
+      final flat = _flattenTree(tree);
+      for (var i = 0; i < flat.length; i++) {
+        final node = flat[i];
+        oldMap[node.task.uid] = _ExitingTaskInfo(
+          task: node.task,
+          depth: node.depth,
+          category: entry.key,
+          prevUid: i > 0 ? flat[i - 1].task.uid : null,
+        );
+      }
+    }
+    // 构建新 UID 集合
+    final newUids = <String>{};
+    for (final tasks in widget.groups.values) {
+      for (final t in tasks) {
+        newUids.add(t.uid);
+      }
+    }
+    // 新出现的任务如果之前在退出队列中，移除（用户撤销了编辑）
+    _exitingTasks.removeWhere((uid, _) => newUids.contains(uid));
+    // 找出消失的任务（跳过待删除任务，那些有独立的撤销机制）
+    for (final entry in oldMap.entries) {
+      final uid = entry.key;
+      if (!newUids.contains(uid) &&
+          !_exitingTasks.containsKey(uid) &&
+          !isPendingDelete(uid)) {
+        _exitingTasks[uid] = entry.value;
+      }
+    }
   }
 
   /// 检测 provider 是否已追上乐观更新：当被移动任务在新数据中的扁平位置与
@@ -985,7 +1451,10 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     final task = Task.create(
       calendarUrl: calendarUrl,
       summary: '',
-    ).copyWith(sortOrder: sortOrder);
+    ).copyWith(
+      status: TaskStatus.inProcess,
+      sortOrder: sortOrder,
+    );
     final repo = ref.read(taskRepositoryProvider);
     final created = await repo.create(task);
     if (!mounted) return;
@@ -1000,7 +1469,10 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       calendarUrl: parent.calendarUrl,
       summary: '',
       parentUid: parent.uid,
-    ).copyWith(sortOrder: sortOrder);
+    ).copyWith(
+      status: TaskStatus.inProcess,
+      sortOrder: sortOrder,
+    );
     final repo = ref.read(taskRepositoryProvider);
     final created = await repo.create(task);
     if (!mounted) return;
@@ -1051,6 +1523,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     }
     _pendingDeletes.clear();
     _optimisticFallbackTimer?.cancel();
+    _stopAutoScroll();
     _removeDragOverlay();
     _scrollCtrl.dispose();
     super.dispose();
@@ -1084,10 +1557,12 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
         }
       },
       child: ListView.builder(
+        key: _scrollViewportKey,
         controller: _scrollCtrl,
-        // 禁用拖拽滚动：避免与任务条的平移拖拽（重排）手势冲突。
-        // 滚动由外层 Listener 的鼠标滚轮加速处理接管。
-        physics: const NeverScrollableScrollPhysics(),
+        // 允许触摸拖拽滚动：任务条的 GestureDetector(supportedDevices) 限制后
+        // 手势竞技场能正确区分——任务条 pan 手势在 hit test 中更深，优先获胜。
+        // 鼠标滚轮仍由外层 Listener.onPointerSignal 加速处理。
+        physics: const ClampingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0).copyWith(bottom: 24),
         itemCount: entries.length,
         itemBuilder: (context, index) {
@@ -1130,15 +1605,6 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
                           _createTaskInCalendar(firstUrl, tree.roots),
                     ),
                   ],
-                  if (widget.debugSortOrder && firstUrl != null) ...[
-                    const SizedBox(width: 8),
-                    Text(
-                      '[${widget.calendarColors.length} calendars]',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.outline,
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
@@ -1147,6 +1613,23 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
         );
       },
       ),
+    );
+  }
+
+  /// 构建退出中任务的条目：只读 `_WorkTaskTile` 包裹在 `_ExitingTaskTile` 中。
+  Widget _buildExitingTaskTile(_ExitingTaskInfo info) {
+    return _ExitingTaskTile(
+      key: ValueKey('exiting-${info.task.uid}'),
+      task: info.task,
+      depth: info.depth,
+      isWide: widget.isWide,
+      onComplete: () {
+        if (mounted) {
+          setState(() {
+            _exitingTasks.remove(info.task.uid);
+          });
+        }
+      },
     );
   }
 
@@ -1164,13 +1647,19 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
         _optimisticCategory == category;
     final flat = useOptimistic ? _optimisticFlat! : _flattenTree(tree);
 
+    // 将退出任务按旧顺序插入到扁平列表中（在原始位置显示高亮渐隐动画）
+    final merged = _mergeWithExiting(category, flat);
+
     if (!canReorder || flat.length < 2) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: flat
-            .map((node) =>
-                _buildFlatTile(category, flat, tree, node, canReorder: false))
-            .toList(),
+        children: [
+          for (final item in merged)
+            if (item is _FlatNode)
+              _buildFlatTile(category, flat, tree, item, canReorder: false)
+            else if (item is _ExitingTaskInfo)
+              _buildExitingTaskTile(item),
+        ],
       );
     }
 
@@ -1183,8 +1672,13 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
 
     final children = <Widget>[];
     int remainingIdx = 0;
-    for (int i = 0; i < flat.length; i++) {
-      final node = flat[i];
+    for (final item in merged) {
+      if (item is _ExitingTaskInfo) {
+        // 退出任务不参与拖拽，直接追加
+        children.add(_buildExitingTaskTile(item));
+        continue;
+      }
+      final node = item as _FlatNode;
       final isBlock = blockUids.contains(node.task.uid);
 
       // 在当前剩余条目前插入指示器（带稳定 key，避免重排时被重建）。
@@ -1212,11 +1706,59 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     );
   }
 
+  /// 将退出任务按旧位置插入到新扁平列表中，返回混合列表。
+  /// 每个退出任务根据其 prevUid（旧列表中前一个任务的 UID）确定插入位置。
+  /// 元素类型为 _FlatNode（常规任务）或 _ExitingTaskInfo（退出任务）。
+  List<Object> _mergeWithExiting(String category, List<_FlatNode> flat) {
+    final exiting = _exitingTasks.values
+        .where((info) => info.category == category)
+        .toList();
+    if (exiting.isEmpty) return flat;
+
+    // 新扁平列表 UID → 索引
+    final newUidToIndex = <String, int>{
+      for (var i = 0; i < flat.length; i++) flat[i].task.uid: i,
+    };
+
+    // 为每个退出任务计算插入位置：紧跟在 prevUid 对应任务之后
+    // 若 prevUid 也被过滤（同样在退出队列），则沿 prevUid 链向前追溯
+    final exitingAtPosition = <int, List<_ExitingTaskInfo>>{};
+    for (final info in exiting) {
+      int insertAt = 0;
+      String? prevUid = info.prevUid;
+      while (prevUid != null) {
+        final prevIdx = newUidToIndex[prevUid];
+        if (prevIdx != null) {
+          insertAt = prevIdx + 1;
+          break;
+        }
+        // prevUid 的任务也在退出队列，继续向前追溯
+        prevUid = _exitingTasks[prevUid]?.prevUid;
+      }
+      exitingAtPosition.putIfAbsent(insertAt, () => []).add(info);
+    }
+
+    // 构建混合列表
+    final merged = <Object>[];
+    for (var i = 0; i <= flat.length; i++) {
+      if (exitingAtPosition.containsKey(i)) {
+        for (final info in exitingAtPosition[i]!) {
+          merged.add(info);
+        }
+      }
+      if (i < flat.length) {
+        merged.add(flat[i]);
+      }
+    }
+    return merged;
+  }
+
   /// 插入指示器：一条按目标深度缩进的彩色细线。
+  /// 缩进与任务条内容对齐（条目内部已按 depth*32 缩进，此处同基准）。
   Widget _buildInsertionIndicator(int depth) {
     final theme = Theme.of(context);
     return Padding(
-      padding: EdgeInsets.only(left: 16.0 + depth * 32.0, right: 16),
+      padding: EdgeInsets.only(left: depth * 32.0, right: 16),
       child: Container(
         height: 3,
         margin: const EdgeInsets.symmetric(vertical: 1),
@@ -1276,7 +1818,6 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       hasChildren: hasChildren,
       isExpanded: isExpanded,
       childCount: children.length,
-      debugSortOrder: widget.debugSortOrder,
       parentPath: parentPath,
       isWide: widget.isWide,
       selected: isSelected,
@@ -1308,18 +1849,22 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
         _tileKeys.putIfAbsent(task.uid, () => GlobalKey(debugLabel: task.uid));
     // GlobalKey 置于最外层：指示器重排时 Flutter 按 key 匹配并移动该子树，
     // 保留 GestureDetector 状态，使正在进行的拖拽手势不中断。
+    // 拖拽期间移动块塌缩为零尺寸（SizedBox.shrink）：剩余条目上移填空隙，
+    // 插入指示器能紧跟指针；被拖任务由 Overlay 浮动预览跟随指针呈现。
     return KeyedSubtree(
       key: key,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
+        // 仅接受鼠标输入，避免触控板滚动/平移误触发拖拽
+        supportedDevices: const {
+          PointerDeviceKind.mouse,
+          PointerDeviceKind.touch,
+        },
         onPanStart: (d) => _onDragStart(category, flat, node, d),
         onPanUpdate: (d) => _onDragUpdate(d),
         onPanEnd: (d) => _onDragEnd(),
         onPanCancel: () => _onDragCancel(),
-        child: Opacity(
-          opacity: isDragGhost ? 0.3 : 1.0,
-          child: tile,
-        ),
+        child: isDragGhost ? const SizedBox.shrink() : tile,
       ),
     );
   }
@@ -1356,6 +1901,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     _dragBlock = block;
     _dragBlockUids = blockUids;
     _dragBlockOffset = details.localPosition;
+    _dragStartGlobalX = details.globalPosition.dx;
     _dragPointerPos = details.globalPosition;
     _dropIndex = remainingIdx;
     _dropDepth = movedDepth;
@@ -1365,12 +1911,13 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     setState(() {});
   }
 
-  /// 拖拽移动：更新指针位置，重算落点（索引 + 深度）。
+  /// 拖拽移动：更新指针位置，重算落点（索引 + 深度），并按需触发边缘自动滚动。
   void _onDragUpdate(DragUpdateDetails details) {
     if (!_isDragging) return;
     _dragPointerPos = details.globalPosition;
     _computeDrop();
     _dragOverlay?.markNeedsBuild();
+    _updateAutoScroll(details.globalPosition);
   }
 
   /// 拖拽结束：执行重排并清理拖拽状态。
@@ -1393,11 +1940,67 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     _dragBlock = null;
     _dragBlockUids = null;
     _dragBlockOffset = null;
+    _dragStartGlobalX = null;
     _dragPointerPos = null;
     _dropIndex = -1;
     _dropDepth = 0;
+    _stopAutoScroll();
     _removeDragOverlay();
     if (mounted) setState(() {});
+  }
+
+  /// 根据指针在视口内的位置决定是否触发自动滚动：
+  /// 指针接近视口顶部时向上滚，接近底部时向下滚，否则停止。
+  void _updateAutoScroll(Offset globalPos) {
+    final box =
+        _scrollViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !box.attached || !_scrollCtrl.hasClients) {
+      _autoScrollDir = 0;
+      _stopAutoScroll();
+      return;
+    }
+    final viewportTop = box.localToGlobal(Offset.zero).dy;
+    final viewportBottom = viewportTop + box.size.height;
+    if (globalPos.dy < viewportTop + _autoScrollEdge) {
+      _autoScrollDir = -1.0;
+      _startAutoScroll();
+    } else if (globalPos.dy > viewportBottom - _autoScrollEdge) {
+      _autoScrollDir = 1.0;
+      _startAutoScroll();
+    } else {
+      _autoScrollDir = 0;
+      _stopAutoScroll();
+    }
+  }
+
+  /// 启动周期定时器按帧滚动列表；已在运行则保持。
+  void _startAutoScroll() {
+    if (_autoScrollTimer != null && _autoScrollTimer!.isActive) return;
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (_autoScrollDir == 0 || !_scrollCtrl.hasClients || !_isDragging) {
+        _stopAutoScroll();
+        return;
+      }
+      final pos = _scrollCtrl.position;
+      final delta = _autoScrollDir * _autoScrollSpeed;
+      final newOffset = (pos.pixels + delta)
+          .clamp(pos.minScrollExtent, pos.maxScrollExtent);
+      // 已到边界则停止
+      if (newOffset == pos.pixels) {
+        _stopAutoScroll();
+        return;
+      }
+      pos.jumpTo(newOffset);
+      // 列表滚动后重算落点并刷新浮动预览
+      _computeDrop();
+      _dragOverlay?.markNeedsBuild();
+    });
+  }
+
+  /// 停止自动滚动定时器。
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
   }
 
   /// 实时计算落点：基于指针 Y 在剩余条目中确定插入索引，
@@ -1430,27 +2033,50 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       }
     }
 
-    // 深度上限：不能超过插入点上一个任务的深度 + 1。
+    // 层级变动范围：插入位置上下任务条层级之间，并允许降到上方任务条的下一级
+    // （上方任务的子级，即 upperDepth + 1）。
+    final hasUpper = dropIdx > 0;
+    final hasLower = dropIdx < remaining.length;
+    final upperDepth = hasUpper ? remaining[dropIdx - 1].depth : 0;
+    final lowerDepth = hasLower ? remaining[dropIdx].depth : 0;
+    int minDepth;
     int maxDepth;
-    if (remaining.isEmpty) {
-      maxDepth = 0;
-    } else if (dropIdx == 0) {
-      maxDepth = remaining.first.depth;
+    if (hasUpper && hasLower) {
+      // 介于上下任务条层级之间，且可到上方任务条 +1 级（子级）。
+      minDepth = upperDepth < lowerDepth ? upperDepth : lowerDepth;
+      maxDepth = lowerDepth > upperDepth + 1 ? lowerDepth : upperDepth + 1;
+    } else if (hasUpper) {
+      minDepth = 0;
+      maxDepth = upperDepth + 1;
+    } else if (hasLower) {
+      minDepth = 0;
+      maxDepth = lowerDepth;
     } else {
-      maxDepth = remaining[dropIdx - 1].depth + 1;
+      minDepth = 0;
+      maxDepth = 0;
     }
 
-    // 指针 X → 缩进深度（列表左边距 16，每级 32）。
-    int depth = dropIdx > 0 ? remaining[dropIdx - 1].depth : 0;
-    final renderBox = context.findRenderObject() as RenderBox?;
-    if (renderBox != null) {
-      final localPos = renderBox.globalToLocal(pos);
-      const baseX = 16.0;
-      const levelWidth = 32.0;
-      final rawDepth = ((localPos.dx - baseX) / levelWidth + 0.5).floor();
-      depth = rawDepth.clamp(0, maxDepth);
+    // 深度判定：以起手点击 X 为 0 轴，向右加深、向左变浅。
+    // 判定宽度增大 50%（48px/级），并设略大于半级的死区抑制抖动。
+    final startX = _dragStartGlobalX;
+    final initialDepth = _dragBlock?.first.depth ?? 0;
+    final baseDepth = initialDepth.clamp(minDepth, maxDepth);
+    int depth;
+    if (startX == null) {
+      depth = baseDepth;
     } else {
-      depth = depth.clamp(0, maxDepth);
+      const levelWidth = 48.0;
+      const deadZone = levelWidth * 0.6;
+      final dx = pos.dx - startX;
+      int depthDelta;
+      if (dx >= deadZone) {
+        depthDelta = ((dx - deadZone) / levelWidth).floor() + 1;
+      } else if (dx <= -deadZone) {
+        depthDelta = ((dx + deadZone) / levelWidth).ceil() - 1;
+      } else {
+        depthDelta = 0;
+      }
+      depth = (baseDepth + depthDelta).clamp(minDepth, maxDepth);
     }
 
     if (dropIdx != _dropIndex || depth != _dropDepth) {
@@ -1617,50 +2243,53 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       left: left,
       top: top,
       child: IgnorePointer(
-        child: Material(
-          elevation: 10,
-          color: scheme.surface,
-          borderRadius: BorderRadius.circular(8),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxWidth),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.drag_indicator,
-                      size: 16, color: scheme.outline),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      head.summary.isEmpty ? '新任务' : head.summary,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (blockCount > 1) ...[
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: scheme.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+        child: Opacity(
+          opacity: 0.7,
+          child: Material(
+            elevation: 10,
+            color: scheme.surface,
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: maxWidth),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.drag_indicator,
+                        size: 16, color: scheme.outline),
+                    const SizedBox(width: 6),
+                    Flexible(
                       child: Text(
-                        '+${blockCount - 1}',
-                        style: TextStyle(
-                          color: scheme.onPrimary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                        head.summary.isEmpty ? '新任务' : head.summary,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (blockCount > 1) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: scheme.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '+${blockCount - 1}',
+                          style: TextStyle(
+                            color: scheme.onPrimary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
           ),
@@ -1726,6 +2355,99 @@ class _FlatNode {
   final int depth;
 }
 
+/// 退出中任务的信息。
+class _ExitingTaskInfo {
+  const _ExitingTaskInfo({
+    required this.task,
+    required this.depth,
+    required this.category,
+    this.prevUid,
+  });
+  final Task task;
+  final int depth;
+  final String category;
+  /// 旧扁平列表中紧邻此任务之前的任务 UID（用于确定插入位置）。
+  final String? prevUid;
+}
+
+/// 退出中任务条目：因编辑导致不再满足过滤条件时，
+/// 先以琥珀色高亮一段时间，然后渐隐 + 塌缩高度从列表中移除。
+class _ExitingTaskTile extends StatefulWidget {
+  const _ExitingTaskTile({
+    super.key,
+    required this.task,
+    required this.depth,
+    required this.isWide,
+    required this.onComplete,
+  });
+  final Task task;
+  final int depth;
+  final bool isWide;
+  final VoidCallback onComplete;
+  @override
+  State<_ExitingTaskTile> createState() => _ExitingTaskTileState();
+}
+
+class _ExitingTaskTileState extends State<_ExitingTaskTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 700),
+    );
+    // 高亮一段时间后开始渐隐+塌缩
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) _ctrl.forward();
+    });
+    _ctrl.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        widget.onComplete();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRect(
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (context, _) {
+          final progress = _ctrl.value; // 0 → 1
+          return Align(
+            alignment: Alignment.topCenter,
+            // heightFactor 从 1.0 → 0.0 实现高度塌缩
+            heightFactor: 1.0 - progress,
+            child: Opacity(
+              opacity: 1.0 - progress,
+              child: _WorkTaskTile(
+                task: widget.task,
+                depth: widget.depth,
+                hasChildren: false,
+                isExpanded: false,
+                childCount: 0,
+                isWide: widget.isWide,
+                // 高亮背景色直接作用于任务条内部，不覆盖缩进区域
+                highlightColor:
+                    Colors.amber.withValues(alpha: 0.3 * (1.0 - progress)),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 /// 单个工作任务条目。
 class _WorkTaskTile extends ConsumerStatefulWidget {
   const _WorkTaskTile({
@@ -1734,7 +2456,6 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
     required this.hasChildren,
     required this.isExpanded,
     required this.childCount,
-    required this.debugSortOrder,
     this.parentPath,
     this.onToggle,
     this.isWide = false,
@@ -1745,6 +2466,7 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
     this.onDelete,
     this.onUndoDelete,
     this.onTitleCommitted,
+    this.highlightColor,
   });
 
   final Task task;
@@ -1752,7 +2474,6 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
   final bool hasChildren;
   final bool isExpanded;
   final int childCount;
-  final bool debugSortOrder;
   /// 前缀模式下孤儿子任务的父路径前缀（如 "父任务 › 子任务"），null 表示无前缀。
   final String? parentPath;
   final VoidCallback? onToggle;
@@ -1770,6 +2491,8 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
   final VoidCallback? onUndoDelete;
   /// 内联标题编辑提交回调。
   final ValueChanged<String>? onTitleCommitted;
+  /// 高亮背景色（用于退出动画），为 null 时使用默认背景色逻辑。
+  final Color? highlightColor;
 
   @override
   ConsumerState<_WorkTaskTile> createState() => _WorkTaskTileState();
@@ -1783,7 +2506,17 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final fmt = DateFormat('MM/dd');
+    final fmtAttr = DateFormat('MM-dd HH:mm');
     final hasNote = widget.task.description.trim().isNotEmpty;
+    final t = widget.task;
+    final showAttr = ref.watch(_showExtendedAttrProvider);
+    // 属性行信息：远端创建、远端修改、本地修改、同步状态（null 显示 "-"）
+    final attrParts = <String>[
+      '远端创建 ${t.created != null ? fmtAttr.format(t.created!.toLocal()) : '-'}',
+      '远端修改 ${t.lastModified != null ? fmtAttr.format(t.lastModified!.toLocal()) : '-'}',
+      '本地修改 ${t.localModifiedAt != null ? fmtAttr.format(t.localModifiedAt!.toLocal()) : '-'}',
+      t.dirty ? '待同步' : '已同步',
+    ];
 
     return Container(
       padding: EdgeInsets.only(left: widget.depth * 32.0),
@@ -1794,13 +2527,14 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
           onTap: () => _showDetail(context),
           child: Container(
             decoration: BoxDecoration(
-              color: widget.pendingDelete
-                  ? scheme.errorContainer.withValues(alpha: 0.3)
-                  : (widget.selected
-                      ? scheme.primaryContainer.withValues(alpha: 0.35)
-                      : (_hovering
-                          ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
-                          : Colors.white)),
+              color: widget.highlightColor ??
+                  (widget.pendingDelete
+                      ? scheme.errorContainer.withValues(alpha: 0.3)
+                      : (widget.selected
+                          ? scheme.primaryContainer.withValues(alpha: 0.35)
+                          : (_hovering
+                              ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
+                              : Colors.white))),
               border: widget.selected
                   ? Border(
                       left: BorderSide(
@@ -1820,7 +2554,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
             child: Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 8, 8, 8),
+                  padding: const EdgeInsets.fromLTRB(4, 5, 8, 5),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -1925,17 +2659,6 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                                     color: scheme.outline,
                                   ),
                                 ),
-                              if (widget.debugSortOrder)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 6),
-                                  child: Text(
-                                    '[so:${widget.task.sortOrder ?? "null"}]',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: scheme.primary,
-                                      fontFamily: 'monospace',
-                                    ),
-                                  ),
-                                ),
                             ],
                           ),
                         ],
@@ -2033,46 +2756,35 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                         ),
                       ),
                     const SizedBox(width: 5),
-                    // 优先级：点击弹出选择菜单（替换原星标位置）
-                    PopupMenuButton<TaskPriority>(
-                      onSelected: (p) => _setPriority(ref, p),
-                      padding: EdgeInsets.zero,
-                      tooltip: '优先级：${_priorityLabel(widget.task.priority)}',
-                      itemBuilder: (ctx) => TaskPriority.values.map((p) {
-                        final cs = Theme.of(ctx).colorScheme;
-                        return PopupMenuItem<TaskPriority>(
-                          value: p,
-                          child: Row(
-                            children: [
-                              Icon(Icons.flag_outlined,
-                                  size: 16, color: _priorityColor(p)),
-                              const SizedBox(width: 6),
-                              Text(_priorityLabel(p)),
-                              if (p == widget.task.priority)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 8),
-                                  child: Icon(Icons.check,
-                                      size: 14, color: cs.primary),
-                                ),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: Icon(
-                          Icons.flag_outlined,
-                          size: 20,
-                          color: widget.task.priority == TaskPriority.none
-                              ? scheme.outlineVariant
-                              : _priorityColor(widget.task.priority),
-                        ),
+                    // 优先级：点击切换 高→低→无→高（不弹菜单）
+                    Tooltip(
+                      message: '优先级：${_priorityLabel(widget.task.priority)}',
+                      child: _IconButton(
+                        icon: Icons.flag_outlined,
+                        color: widget.task.priority == TaskPriority.none
+                            ? scheme.outlineVariant
+                            : _priorityColor(widget.task.priority),
+                        onPressed: () => _cyclePriority(ref),
                       ),
                     ),
                   ],
                 ),
               ),
+              // 属性行：创建、远端修改、本地修改、完成时间
+              if (showAttr && attrParts.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 32, right: 8, bottom: 4),
+                    child: Text(
+                      attrParts.join('  ·  '),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.outlineVariant,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ),
               Divider(
                 height: 1,
                 indent: 0,
@@ -2111,13 +2823,17 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
     }
   }
 
-  /// 设置任务优先级（持久化）。
-  Future<void> _setPriority(WidgetRef ref, TaskPriority p) async {
-    if (p == widget.task.priority) return;
+  /// 循环切换优先级：无→高→低→无（跳过中级）。
+  Future<void> _cyclePriority(WidgetRef ref) async {
+    final next = switch (widget.task.priority) {
+      TaskPriority.none => TaskPriority.high,
+      TaskPriority.high => TaskPriority.low,
+      _ => TaskPriority.none,
+    };
     final repo = ref.read(taskRepositoryProvider);
     final now = DateTime.now().toUtc();
     final updated = widget.task.copyWith(
-      priority: p,
+      priority: next,
       lastModified: now,
       localModifiedAt: now,
       dirty: true,

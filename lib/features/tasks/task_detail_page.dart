@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -566,7 +567,7 @@ class _DetailListState extends State<_DetailList> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
       children: [
-        // 标题（就地 TextField，单行，回车保存）
+        // 标题（就地 TextField，自动换行，回车保存，禁止换行输入）
         if (_editingTitle)
           Padding(
             padding:
@@ -575,9 +576,11 @@ class _DetailListState extends State<_DetailList> {
               controller: _titleCtrl,
               focusNode: _titleFocus,
               autofocus: true,
-              maxLines: 1,
+              maxLines: null,
+              minLines: 1,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _commitTitle(),
+              inputFormatters: [FilteringTextInputFormatter.deny('\n')],
               decoration: InputDecoration(
                 labelText: '标题',
                 border: const OutlineInputBorder(),
@@ -662,7 +665,7 @@ class _DetailListState extends State<_DetailList> {
           label: '优先级',
           value: task.priority,
           onChanged: _setPriority,
-          options: TaskPriority.values
+          options: [TaskPriority.none, TaskPriority.high, TaskPriority.low]
               .map((p) => _DropdownOption(
                     value: p,
                     label: _priorityLabel(p),
@@ -946,6 +949,7 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
   late DateTime _date;
   late int _hour;
   late int _minute;
+  late DateTime _displayedMonth;
 
   @override
   void initState() {
@@ -953,6 +957,7 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
     _date = DateTime(widget.initial.year, widget.initial.month, widget.initial.day);
     _hour = widget.initial.hour;
     _minute = widget.initial.minute;
+    _displayedMonth = DateTime(_date.year, _date.month);
   }
 
   @override
@@ -984,15 +989,7 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
-                        height: 320,
-                        child: CalendarDatePicker(
-                          initialDate: _date,
-                          firstDate: DateTime(widget.initial.year - 5),
-                          lastDate: DateTime(widget.initial.year + 5),
-                          onDateChanged: (d) => setState(() => _date = d),
-                        ),
-                      ),
+                      _buildMonthGrid(),
                       const Divider(height: 1),
                       // 时间行（仅 showTime 时显示）
                       if (widget.showTime)
@@ -1054,6 +1051,146 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
           ),
         ),
       ],
+    );
+  }
+
+  /// 自定义月历网格：前后月份日期填满 6×7 网格，跨月日期可点击切换月份。
+  Widget _buildMonthGrid() {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final monthFmt = DateFormat('yyyy年M月');
+
+    final firstOfMonth = DateTime(_displayedMonth.year, _displayedMonth.month, 1);
+    // 周一为首列：weekday 1=周一 … 7=周日
+    final gridStart = firstOfMonth.subtract(Duration(days: firstOfMonth.weekday - 1));
+    const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日'];
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 月份导航
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left, size: 20),
+                onPressed: () => setState(() {
+                  _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month - 1);
+                }),
+                visualDensity: VisualDensity.compact,
+              ),
+              Text(monthFmt.format(_displayedMonth),
+                  style: theme.textTheme.titleSmall),
+              IconButton(
+                icon: const Icon(Icons.chevron_right, size: 20),
+                onPressed: () => setState(() {
+                  _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month + 1);
+                }),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+        ),
+        // 星期表头
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            children: [
+              for (final w in weekdayLabels)
+                Expanded(
+                  child: Center(
+                    child: Text(w,
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: scheme.outline)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        // 6 行日期
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Column(
+            children: [
+              for (int week = 0; week < 6; week++)
+                Row(
+                  children: [
+                    for (int day = 0; day < 7; day++)
+                      Expanded(
+                        child: _buildDayCell(
+                          gridStart.add(Duration(days: week * 7 + day)),
+                          today,
+                          scheme,
+                          theme,
+                        ),
+                      ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 单个日期单元格。
+  Widget _buildDayCell(
+    DateTime cellDate,
+    DateTime today,
+    ColorScheme scheme,
+    ThemeData theme,
+  ) {
+    final isCurrentMonth = cellDate.month == _displayedMonth.month;
+    final isToday = cellDate == today;
+    final isSelected = cellDate.year == _date.year &&
+        cellDate.month == _date.month &&
+        cellDate.day == _date.day;
+
+    Color? bgColor;
+    Color? textColor = scheme.onSurface;
+    if (isSelected) {
+      bgColor = scheme.primary;
+      textColor = scheme.onPrimary;
+    } else if (isToday) {
+      textColor = scheme.primary;
+    }
+    if (!isCurrentMonth && !isSelected) {
+      textColor = scheme.outline.withValues(alpha: 0.5);
+    }
+
+    return GestureDetector(
+      onTap: () => setState(() {
+        _date = cellDate;
+        if (!isCurrentMonth) {
+          _displayedMonth = DateTime(cellDate.year, cellDate.month);
+        }
+      }),
+      child: AspectRatio(
+        aspectRatio: 1,
+        child: Container(
+          margin: const EdgeInsets.all(1),
+          decoration: BoxDecoration(
+            color: bgColor,
+            shape: BoxShape.circle,
+            border: isToday && !isSelected
+                ? Border.all(color: scheme.primary, width: 1.5)
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '${cellDate.day}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: textColor,
+              fontWeight: isToday || isSelected ? FontWeight.w600 : null,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -1295,8 +1432,8 @@ class _DescriptionFieldState extends State<_DescriptionField> {
                   TextField(
                     controller: _ctrl,
                     focusNode: _focus,
-                    maxLines: 5,
-                    minLines: 3,
+                    maxLines: 8,
+                    minLines: 2,
                     decoration: const InputDecoration(
                       border: OutlineInputBorder(),
                       isDense: true,
@@ -1326,7 +1463,7 @@ class _DescriptionFieldState extends State<_DescriptionField> {
       label: '描述',
       value: empty ? '点击添加描述' : widget.description,
       valueColor: empty ? scheme.outline : scheme.onSurface,
-      maxLines: 2,
+      maxLines: 8,
       minLines: 2,
       trailing: const Icon(Icons.edit_outlined, size: 18),
       onTap: _startEdit,
@@ -2006,7 +2143,7 @@ class _NewTaskFormState extends State<_NewTaskForm> {
               context: context,
               builder: (ctx) => SimpleDialog(
                 title: const Text('选择优先级'),
-                children: TaskPriority.values.map((p) {
+                children: [TaskPriority.none, TaskPriority.high, TaskPriority.low].map((p) {
                   return SimpleDialogOption(
                     onPressed: () => Navigator.pop(ctx, p),
                     child: Row(children: [

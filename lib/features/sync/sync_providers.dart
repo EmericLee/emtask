@@ -223,6 +223,36 @@ class SyncNotifier extends Notifier<SyncState> {
     }
   }
 
+  /// 手动全量同步：清除 syncToken 后执行 push + 全量 pull。
+  /// 取消所有待执行的自动调度。
+  Future<SyncResult> fullSync() async {
+    _cancelPending();
+    state = state.copyWith(running: true, error: null);
+    try {
+      final syncRepo = ref.read(syncRepositoryProvider);
+      final allDayDates = !ref.read(showTimeInDateFieldProvider);
+      final result = await syncRepo.fullSync(allDayDates: allDayDates);
+      final now = DateTime.now();
+      state = state.copyWith(
+        running: false,
+        lastResult: result,
+        error: result.error?.toString(),
+        lastPushAt: now,
+        lastPullAt: now,
+      );
+      return result;
+    } catch (e) {
+      final now = DateTime.now();
+      state = state.copyWith(
+        running: false,
+        error: e.toString(),
+        lastPushAt: now,
+        lastPullAt: now,
+      );
+      return SyncResult(error: e, finishedAt: DateTime.now().toUtc());
+    }
+  }
+
   /// 手动 push：取消自动调度后立即执行。
   Future<SyncResult> pushOnly() async {
     _cancelPending();

@@ -13,6 +13,12 @@ abstract class SyncRepository {
 
   /// 仅拉取远端变更
   Future<SyncResult> pull();
+
+  /// 全量同步：清除所有日历的 syncToken 后执行 push + 全量 pull。
+  ///
+  /// 与 [sync] 的区别：pull 阶段不再走 sync-collection 增量同步，
+  /// 而是强制全量拉取所有任务。适用于数据不一致时重建本地状态。
+  Future<SyncResult> fullSync({bool allDayDates = false});
 }
 
 /// 单次同步结果。
