@@ -565,7 +565,7 @@ class _DetailListState extends State<_DetailList> {
     final task = widget.task;
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
       children: [
         // 标题（就地 TextField，自动换行，回车保存，禁止换行输入）
         if (_editingTitle)
@@ -660,7 +660,9 @@ class _DetailListState extends State<_DetailList> {
         ),
         // 优先级：下拉选择控件
         _DropdownField<TaskPriority>(
-          icon: Icons.flag_outlined,
+          icon: task.priority == TaskPriority.high
+              ? Icons.star
+              : Icons.star_border,
           iconColor: _priorityColor(task.priority),
           label: '优先级',
           value: task.priority,
@@ -669,7 +671,9 @@ class _DetailListState extends State<_DetailList> {
               .map((p) => _DropdownOption(
                     value: p,
                     label: _priorityLabel(p),
-                    icon: Icons.flag_outlined,
+                    icon: p == TaskPriority.high
+                        ? Icons.star
+                        : Icons.star_border,
                     color: _priorityColor(p),
                   ))
               .toList(),
@@ -778,7 +782,7 @@ class _DetailListState extends State<_DetailList> {
   static Color _priorityColor(TaskPriority p) => switch (p) {
         TaskPriority.none => Colors.grey,
         TaskPriority.high => Colors.red,
-        TaskPriority.medium => Colors.orange,
+        TaskPriority.medium => Colors.blue,
         TaskPriority.low => Colors.blue,
       };
 }
@@ -822,19 +826,19 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
         : fmt.format(widget.value!.toLocal());
     return Padding(
       key: _tileKey,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(widget.icon, size: 18, color: scheme.outline),
-          const SizedBox(width: 10),
+          Icon(widget.icon, size: 16, color: scheme.outline),
+          const SizedBox(width: 8),
           SizedBox(
-            width: 72,
+            width: 64,
             child: Text(widget.label,
                 style: theme.textTheme.labelMedium
                     ?.copyWith(color: scheme.outline)),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 160),
             child: InkWell(
@@ -883,8 +887,8 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
     final media = MediaQuery.of(ctx);
     final showTime = ref.read(showTimeInDateFieldProvider);
 
-    const panelWidth = 296.0;
-    final panelHeight = showTime ? 420.0 : 380.0;
+    const panelWidth = 272.0;
+    final panelHeight = showTime ? 360.0 : 320.0;
     // 下方空间不足则向上弹出
     final showBelow =
         topLeft.dy + size.height + panelHeight + 16 < media.size.height;
@@ -985,30 +989,29 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
               child: SizedBox(
                 width: widget.panelWidth,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+                  padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _buildMonthGrid(),
-                      const Divider(height: 1),
                       // 时间行（仅 showTime 时显示）
                       if (widget.showTime)
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 4),
+                              horizontal: 2, vertical: 2),
                           child: Row(
                             children: [
                               Text('时间',
-                                  style: theme.textTheme.labelMedium
+                                  style: theme.textTheme.labelSmall
                                       ?.copyWith(color: scheme.outline)),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 6),
                               _TimeSpinner(
                                 value: _hour,
                                 maxValue: 23,
                                 onChanged: (v) => setState(() => _hour = v),
                               ),
                               const Padding(
-                                padding: EdgeInsets.symmetric(horizontal: 4),
+                                padding: EdgeInsets.symmetric(horizontal: 3),
                                 child: Text(':'),
                               ),
                               _TimeSpinner(
@@ -1019,27 +1022,37 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
                             ],
                           ),
                         ),
-                      // 按钮行：清除 / 取消 / 确定
+                      // 按钮行：清除 / 取消 / 确定（仅时间模式显示确定）
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 4),
+                            horizontal: 2, vertical: 2),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             TextButton(
-                                onPressed: widget.onClear,
-                                child: const Text('清除')),
+                                  onPressed: widget.onClear,
+                                  child: const Text('清除',
+                                      style: TextStyle(fontSize: 13))),
                             TextButton(
                                 onPressed: widget.onCancel,
-                                child: const Text('取消')),
-                            FilledButton(
-                              onPressed: () => widget.onConfirm(
-                                DateTime(_date.year, _date.month, _date.day,
-                                        _hour, _minute)
-                                    .toUtc(),
+                                child: const Text('取消',
+                                    style: TextStyle(fontSize: 13))),
+                            if (widget.showTime) ...[
+                              const SizedBox(width: 4),
+                              FilledButton(
+                                onPressed: () => widget.onConfirm(
+                                  DateTime(_date.year, _date.month, _date.day,
+                                          _hour, _minute)
+                                      .toUtc(),
+                                ),
+                                style: FilledButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 6),
+                                  textStyle: const TextStyle(fontSize: 13),
+                                ),
+                                child: const Text('确定'),
                               ),
-                              child: const Text('确定'),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -1072,32 +1085,36 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
       children: [
         // 月份导航
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
-                icon: const Icon(Icons.chevron_left, size: 20),
+                icon: const Icon(Icons.chevron_left, size: 18),
                 onPressed: () => setState(() {
                   _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month - 1);
                 }),
                 visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
               Text(monthFmt.format(_displayedMonth),
                   style: theme.textTheme.titleSmall),
               IconButton(
-                icon: const Icon(Icons.chevron_right, size: 20),
+                icon: const Icon(Icons.chevron_right, size: 18),
                 onPressed: () => setState(() {
                   _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month + 1);
                 }),
                 visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
             ],
           ),
         ),
         // 星期表头
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 2),
           child: Row(
             children: [
               for (final w in weekdayLabels)
@@ -1111,10 +1128,10 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
             ],
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 2),
         // 6 行日期
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 2),
           child: Column(
             children: [
               for (int week = 0; week < 6; week++)
@@ -1164,12 +1181,24 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
     }
 
     return GestureDetector(
-      onTap: () => setState(() {
-        _date = cellDate;
-        if (!isCurrentMonth) {
-          _displayedMonth = DateTime(cellDate.year, cellDate.month);
+      onTap: () {
+        // 日期模式（无时间选择器）：点击即确认并关闭
+        if (!widget.showTime) {
+          widget.onConfirm(
+            DateTime(cellDate.year, cellDate.month, cellDate.day,
+                    _hour, _minute)
+                .toUtc(),
+          );
+          return;
         }
-      }),
+        // 日期时间模式：仅更新选中日期，等待用户确认
+        setState(() {
+          _date = cellDate;
+          if (!isCurrentMonth) {
+            _displayedMonth = DateTime(cellDate.year, cellDate.month);
+          }
+        });
+      },
       child: AspectRatio(
         aspectRatio: 1,
         child: Container(
@@ -1182,11 +1211,14 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
                 : null,
           ),
           alignment: Alignment.center,
-          child: Text(
-            '${cellDate.day}',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: textColor,
-              fontWeight: isToday || isSelected ? FontWeight.w600 : null,
+          child: FittedBox(
+            child: Text(
+              '${cellDate.day}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: textColor,
+                fontSize: 12,
+                fontWeight: isToday || isSelected ? FontWeight.w600 : null,
+              ),
             ),
           ),
         ),
@@ -1211,30 +1243,30 @@ class _TimeSpinner extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      width: 44,
+      width: 40,
       decoration: BoxDecoration(
         border: Border.all(color: scheme.outlineVariant),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(4),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           InkWell(
             onTap: () => onChanged((value + 1) % (maxValue + 1)),
-            child: Icon(Icons.arrow_drop_up, size: 16, color: scheme.outline),
+            child: Icon(Icons.arrow_drop_up, size: 14, color: scheme.outline),
           ),
           Text(
             value.toString().padLeft(2, '0'),
             style: const TextStyle(
               fontFeatures: [FontFeature.tabularFigures()],
-              fontSize: 14,
+              fontSize: 12,
             ),
           ),
           InkWell(
             onTap: () =>
                 onChanged((value - 1 + maxValue + 1) % (maxValue + 1)),
             child:
-                Icon(Icons.arrow_drop_down, size: 16, color: scheme.outline),
+                Icon(Icons.arrow_drop_down, size: 14, color: scheme.outline),
           ),
         ],
       ),
@@ -1263,19 +1295,19 @@ class _PercentEditorState extends State<_PercentEditor> {
     final scheme = theme.colorScheme;
     final display = _editing ? _draggingValue : widget.task.percent;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(Icons.percent_outlined, size: 18, color: scheme.outline),
-          const SizedBox(width: 10),
+          Icon(Icons.percent_outlined, size: 16, color: scheme.outline),
+          const SizedBox(width: 8),
           SizedBox(
-            width: 72,
+            width: 64,
             child: Text('完成进度',
                 style: theme.textTheme.labelMedium
                     ?.copyWith(color: scheme.outline)),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 160),
             child: _editing
@@ -1411,21 +1443,21 @@ class _DescriptionFieldState extends State<_DescriptionField> {
     final scheme = theme.colorScheme;
     if (_editing) {
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.notes, size: 18, color: scheme.outline),
-            const SizedBox(width: 10),
+            Icon(Icons.notes, size: 16, color: scheme.outline),
+            const SizedBox(width: 8),
             SizedBox(
-                width: 72,
+                width: 64,
                 child: Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text('描述',
                       style: theme.textTheme.labelMedium
                           ?.copyWith(color: scheme.outline)),
                 )),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Expanded(
               child: Column(
                 children: [
@@ -1519,21 +1551,21 @@ class _TagEditorState extends State<_TagEditor> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.label_outline, size: 18, color: scheme.outline),
-          const SizedBox(width: 10),
+          Icon(Icons.label_outline, size: 16, color: scheme.outline),
+          const SizedBox(width: 8),
           SizedBox(
-              width: 72,
+              width: 64,
               child: Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text('标签',
                     style: theme.textTheme.labelMedium
                         ?.copyWith(color: scheme.outline)),
               )),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1671,21 +1703,21 @@ class _DropdownField<T> extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, size: 18, color: iconColor ?? scheme.outline),
-          const SizedBox(width: 10),
+          Icon(icon, size: 16, color: iconColor ?? scheme.outline),
+          const SizedBox(width: 8),
           SizedBox(
-            width: 72,
+            width: 64,
             child: Text(
               label,
               style: theme.textTheme.labelMedium
                   ?.copyWith(color: scheme.outline),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 160),
             child: Theme(
@@ -1775,16 +1807,16 @@ class _EditTile extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
           crossAxisAlignment: multiLine
               ? CrossAxisAlignment.start
               : CrossAxisAlignment.center,
           children: [
-            Icon(icon, size: 18, color: iconColor ?? scheme.outline),
-            const SizedBox(width: 10),
+            Icon(icon, size: 16, color: iconColor ?? scheme.outline),
+            const SizedBox(width: 8),
             SizedBox(
-              width: 72,
+              width: 64,
               child: Padding(
                 padding: EdgeInsets.only(top: multiLine ? 2 : 0),
                 child: Text(
@@ -1795,7 +1827,7 @@ class _EditTile extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             Expanded(
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: minHeight),
@@ -1860,13 +1892,13 @@ class _SyncInfoTileState extends State<_SyncInfoTile> {
           borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             child: Row(
               children: [
-                Icon(Icons.sync_outlined, size: 18, color: scheme.outline),
-                const SizedBox(width: 10),
-                const SizedBox(width: 72, child: Text('同步信息')),
+                Icon(Icons.sync_outlined, size: 16, color: scheme.outline),
                 const SizedBox(width: 8),
+                const SizedBox(width: 64, child: Text('同步信息')),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     t.dirty ? '待同步' : '已同步',
@@ -2133,7 +2165,9 @@ class _NewTaskFormState extends State<_NewTaskForm> {
           },
         ),
         _EditTile(
-          icon: Icons.flag_outlined,
+          icon: _priority == TaskPriority.high
+              ? Icons.star
+              : Icons.star_border,
           iconColor: _priorityColor(_priority),
           label: '优先级',
           value: _priorityLabel(_priority),
@@ -2147,7 +2181,12 @@ class _NewTaskFormState extends State<_NewTaskForm> {
                   return SimpleDialogOption(
                     onPressed: () => Navigator.pop(ctx, p),
                     child: Row(children: [
-                      Icon(Icons.flag_outlined, color: _priorityColor(p)),
+                      Icon(
+                        p == TaskPriority.high
+                            ? Icons.star
+                            : Icons.star_border,
+                        color: _priorityColor(p),
+                      ),
                       const SizedBox(width: 12),
                       Expanded(child: Text(_priorityLabel(p))),
                       if (p == _priority) const Icon(Icons.check, size: 18),
@@ -2231,7 +2270,7 @@ class _NewTaskFormState extends State<_NewTaskForm> {
   static Color _priorityColor(TaskPriority p) => switch (p) {
         TaskPriority.none => Colors.grey,
         TaskPriority.high => Colors.red,
-        TaskPriority.medium => Colors.orange,
+        TaskPriority.medium => Colors.blue,
         TaskPriority.low => Colors.blue,
       };
 }

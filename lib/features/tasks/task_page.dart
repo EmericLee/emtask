@@ -88,19 +88,17 @@ enum _OptionMenu {
 /// 任务页配置是否已从 SharedPreferences 加载（防止重复初始化）。
 bool _taskPageSettingsLoaded = false;
 
-/// 日历 URL 到显示名称的映射。
-final _calendarNameMapProvider = FutureProvider<Map<String, String>>((ref) async {
-  final repo = ref.watch(calendarRepositoryProvider);
-  final calendars = await repo.getAll();
+/// 日历 URL 到显示名称的映射（响应式，跟随 calendarListProvider 自动更新）。
+final _calendarNameMapProvider = Provider<Map<String, String>>((ref) {
+  final calendars = ref.watch(calendarListProvider).valueOrNull ?? const [];
   return {for (final c in calendars) c.url: c.displayName};
 });
 
 /// 已启用同步的日历列表（含名称与颜色），用于清单过滤菜单。
+/// 响应式：日历启停或颜色变更时自动刷新。
 final _syncedCalendarListProvider =
-    FutureProvider<List<({String url, String name, Color color})>>(
-        (ref) async {
-  final repo = ref.watch(calendarRepositoryProvider);
-  final calendars = await repo.getAll();
+    Provider<List<({String url, String name, Color color})>>((ref) {
+  final calendars = ref.watch(calendarListProvider).valueOrNull ?? const [];
   return [
     for (final c in calendars)
       if (c.syncEnabled)
@@ -112,10 +110,9 @@ final _syncedCalendarListProvider =
   ];
 });
 
-/// 日历 URL 到颜色的映射。
-final _calendarColorMapProvider = FutureProvider<Map<String, Color>>((ref) async {
-  final repo = ref.watch(calendarRepositoryProvider);
-  final calendars = await repo.getAll();
+/// 日历 URL 到颜色的映射（响应式，跟随 calendarListProvider 自动更新）。
+final _calendarColorMapProvider = Provider<Map<String, Color>>((ref) {
+  final calendars = ref.watch(calendarListProvider).valueOrNull ?? const [];
   return {
     for (final c in calendars) c.url: _parseCalendarColor(c.color),
   };
@@ -151,8 +148,8 @@ class TaskPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tasksAsync = ref.watch(taskListProvider);
-    final calendarNamesAsync = ref.watch(_calendarNameMapProvider);
-    final calendarColorsAsync = ref.watch(_calendarColorMapProvider);
+    final calendarNames = ref.watch(_calendarNameMapProvider);
+    final calendarColors = ref.watch(_calendarColorMapProvider);
     final completedRange = ref.watch(_completedRangeProvider);
     final viewMode = ref.watch(_taskViewModeProvider);
     final currentViewDays = ref.watch(_currentViewDaysProvider);
@@ -267,10 +264,8 @@ class TaskPage extends ConsumerWidget {
         }
         return null;
       }
-      final calendarNames =
-          ref.read(_calendarNameMapProvider).valueOrNull ?? {};
-      final calendarColors =
-          ref.read(_calendarColorMapProvider).valueOrNull ?? {};
+      final calendarNames = ref.read(_calendarNameMapProvider);
+      final calendarColors = ref.read(_calendarColorMapProvider);
       final completedRangeNow = ref.read(_completedRangeProvider);
       final viewModeNow = ref.read(_taskViewModeProvider);
       final currentViewDaysNow = ref.read(_currentViewDaysProvider);
@@ -415,7 +410,7 @@ class TaskPage extends ConsumerWidget {
           ),
           // 按清单过滤（仅显示已启用同步的清单）
           _CalendarFilterMenu(
-            syncedCalendarsAsync: ref.watch(_syncedCalendarListProvider),
+            syncedCalendars: ref.watch(_syncedCalendarListProvider),
             selected: selectedCalendar,
             onSelected: (url) =>
                 ref.read(_selectedCalendarProvider.notifier).state = url,
@@ -483,8 +478,8 @@ class TaskPage extends ConsumerWidget {
         context,
         ref,
         tasksAsync: tasksAsync,
-        calendarNamesAsync: calendarNamesAsync,
-        calendarColorsAsync: calendarColorsAsync,
+        calendarNames: calendarNames,
+        calendarColors: calendarColors,
         completedRange: completedRange,
         viewMode: viewMode,
         currentViewDays: currentViewDays,
@@ -503,8 +498,8 @@ class TaskPage extends ConsumerWidget {
     BuildContext context,
     WidgetRef ref, {
     required AsyncValue<List<Task>> tasksAsync,
-    required AsyncValue<Map<String, String>> calendarNamesAsync,
-    required AsyncValue<Map<String, Color>> calendarColorsAsync,
+    required Map<String, String> calendarNames,
+    required Map<String, Color> calendarColors,
     required _CompletedRange completedRange,
     required _TaskViewMode viewMode,
     required int currentViewDays,
@@ -523,8 +518,6 @@ class TaskPage extends ConsumerWidget {
         message: e.toString(),
       ),
       data: (tasks) {
-        final calendarNames = calendarNamesAsync.valueOrNull ?? {};
-        final calendarColors = calendarColorsAsync.valueOrNull ?? {};
         var visibleTasks = _applyViewFilters(tasks,
             completedRange: completedRange, viewMode: viewMode, currentViewDays: currentViewDays);
         if (selectedCalendar != null) {
@@ -989,20 +982,19 @@ void _showCompletedRangePopup(
 /// 按清单（日历）过滤下拉菜单，仅显示已启用同步的清单并带颜色圆点。
 class _CalendarFilterMenu extends StatelessWidget {
   const _CalendarFilterMenu({
-    required this.syncedCalendarsAsync,
+    required this.syncedCalendars,
     required this.selected,
     required this.onSelected,
   });
 
-  final AsyncValue<List<({String url, String name, Color color})>>
-      syncedCalendarsAsync;
+  final List<({String url, String name, Color color})> syncedCalendars;
   final String? selected;
   final ValueChanged<String?> onSelected;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final list = syncedCalendarsAsync.valueOrNull ?? [];
+    final list = syncedCalendars;
     final isAll = selected == null;
     final selectedCal = isAll
         ? null
@@ -2760,7 +2752,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                     Tooltip(
                       message: '优先级：${_priorityLabel(widget.task.priority)}',
                       child: _IconButton(
-                        icon: Icons.flag_outlined,
+                        icon: _priorityIcon(widget.task.priority),
                         color: widget.task.priority == TaskPriority.none
                             ? scheme.outlineVariant
                             : _priorityColor(widget.task.priority),
@@ -3190,6 +3182,10 @@ Color _statusColor(TaskStatus s, ColorScheme scheme) => switch (s) {
 Color _priorityColor(TaskPriority p) => switch (p) {
       TaskPriority.none => Colors.grey,
       TaskPriority.high => Colors.red,
-      TaskPriority.medium => Colors.orange,
+      TaskPriority.medium => Colors.blue,
       TaskPriority.low => Colors.blue,
     };
+
+/// 优先级图标：高=实心星、中/低=空心星、无=空心星（灰色切换按钮）
+IconData _priorityIcon(TaskPriority p) =>
+    p == TaskPriority.high ? Icons.star : Icons.star_border;

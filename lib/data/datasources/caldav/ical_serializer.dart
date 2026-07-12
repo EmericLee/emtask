@@ -219,11 +219,14 @@ class IcalSerializer {
   }
 
   /// 仅日期格式（VALUE=DATE）：YYYYMMDD，无时间部分。
+  ///
+  /// VALUE=DATE 是无时区的日历日，必须从本地时间提取日期分量。
+  /// 如果从 UTC 提取，东半球时区会导致日期偏移（如 UTC+8 下少一天）。
   static String _formatDateOnly(DateTime dt) {
-    final utc = dt.toUtc();
+    final local = dt.toLocal();
     String two(int v) => v.toString().padLeft(2, '0');
-    return '${utc.year.toString().padLeft(4, '0')}'
-        '${two(utc.month)}${two(utc.day)}';
+    return '${local.year.toString().padLeft(4, '0')}'
+        '${two(local.month)}${two(local.day)}';
   }
 
   static DateTime? _parseDate(_IcalProperty? prop) {

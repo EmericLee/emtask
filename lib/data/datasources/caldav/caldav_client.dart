@@ -362,7 +362,7 @@ class CalDavClient {
 
   static String _propfindCalendarHomeBody() {
     return '''<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.org/ns/" xmlns:oc="http://owncloud.org/ns/" xmlns:apple="http://apple.com/ns/ical/">
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.com/ns/" xmlns:oc="http://owncloud.org/ns/" xmlns:apple="http://apple.com/ns/ical/">
   <d:prop>
     <d:resourcetype/>
     <d:displayname/>
@@ -379,7 +379,7 @@ class CalDavClient {
 
   static String _propfindCalendarPropsBody() {
     return '''<?xml version="1.0" encoding="UTF-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.org/ns/" xmlns:apple="http://apple.com/ns/ical/">
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:nc="http://nextcloud.com/ns/" xmlns:apple="http://apple.com/ns/ical/">
   <d:prop>
     <d:displayname/>
     <cs:getctag/>
@@ -458,8 +458,7 @@ class CalDavClient {
         ctag ??= _childText(prop, 'getctag');
         syncToken ??= _childText(prop, 'sync-token');
         // 优先 nc:color，回退 apple:calendar-color
-        color ??= _childText(prop, 'color') ??
-            _childText(prop, 'calendar-color');
+        color ??= _propText(prop, 'color') ?? _propText(prop, 'calendar-color');
         owner ??= _childText(prop, 'owner');
         compSet ??= prop
             .findElements('supported-calendar-component-set', namespace: '*')
@@ -574,5 +573,15 @@ class CalDavClient {
   static String? _childText(XmlElement parent, String name) {
     final el = parent.findElements(name, namespace: '*').firstOrNull;
     return el?.innerText.trim();
+  }
+
+  /// 按 localName 查找子元素文本（不依赖命名空间，比 [_childText] 更健壮）。
+  static String? _propText(XmlElement parent, String localName) {
+    for (final child in parent.childElements) {
+      if (child.localName == localName) {
+        return child.innerText.trim();
+      }
+    }
+    return null;
   }
 }
