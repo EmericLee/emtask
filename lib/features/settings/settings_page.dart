@@ -4,153 +4,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/theme_controller.dart';
 import '../../core/utils/platform_info.dart';
-import '../../data/datasources/caldav/caldav_account.dart';
-import '../../data/providers.dart';
-import '../sync/sync_providers.dart';
 import '../tasks/task_providers.dart';
 
-/// 设置页：配置 CalDAV / Nextcloud 账户。
-class SettingsPage extends ConsumerStatefulWidget {
+/// 设置页：外观 + 任务列表显示 + 关于。
+class SettingsPage extends ConsumerWidget {
   const SettingsPage({super.key});
 
   @override
-  ConsumerState<SettingsPage> createState() => _SettingsPageState();
-}
-
-class _SettingsPageState extends ConsumerState<SettingsPage> {
-  final _urlCtrl = TextEditingController();
-  final _userCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
-  bool _trustCert = false;
-  bool _saving = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadAccount();
-  }
-
-  Future<void> _loadAccount() async {
-    final storage = await ref.read(accountStorageProvider.future);
-    final acc = await storage.load();
-    if (acc != null && mounted) {
-      setState(() {
-        _urlCtrl.text = acc.baseUrl;
-        _userCtrl.text = acc.username;
-        _passCtrl.text = acc.password;
-        _nameCtrl.text = acc.displayName ?? '';
-        _trustCert = acc.trustSelfSignedCert;
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    _urlCtrl.dispose();
-    _userCtrl.dispose();
-    _passCtrl.dispose();
-    _nameCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    setState(() => _saving = true);
-    try {
-      final account = CalDavAccount(
-        baseUrl: _urlCtrl.text.trim().replaceAll(RegExp(r'/+$'), ''),
-        username: _userCtrl.text.trim(),
-        password: _passCtrl.text.trim(),
-        displayName: _nameCtrl.text.trim().isEmpty
-            ? null
-            : _nameCtrl.text.trim(),
-        trustSelfSignedCert: _trustCert,
-      );
-      final storage = await ref.read(accountStorageProvider.future);
-      await storage.save(account);
-      // 刷新 account provider
-      ref.invalidate(currentAccountProvider);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已保存账户配置')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败：$e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('CalDAV 账户',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _urlCtrl,
-            decoration: const InputDecoration(
-              labelText: '服务器地址',
-              hintText: 'https://cloud.example.com',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _userCtrl,
-            decoration: const InputDecoration(
-              labelText: '用户名',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passCtrl,
-            decoration: const InputDecoration(
-              labelText: '应用密码',
-              helperText: 'Nextcloud：在「安全」设置中生成应用密码',
-              border: OutlineInputBorder(),
-            ),
-            obscureText: true,
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _nameCtrl,
-            decoration: const InputDecoration(
-              labelText: '显示名称（可选）',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('信任自签名证书'),
-            subtitle: const Text('内网 / UOS 本地部署常用'),
-            value: _trustCert,
-            onChanged: (v) => setState(() => _trustCert = v),
-          ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: _saving ? null : _save,
-            icon: _saving
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.save),
-            label: const Text('保存账户'),
-          ),
-          const SizedBox(height: 32),
           // 主题选择
           Text('外观',
               style: Theme.of(context).textTheme.titleMedium),
@@ -171,12 +37,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             onChanged: (v) =>
                 ref.read(showTimeInDateFieldProvider.notifier).state = v,
           ),
-          const SizedBox(height: 24),
-          // 同步设置
-          Text('同步',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          _AutoSyncIntervalSelector(ref: ref),
           const SizedBox(height: 24),
           Card(
             child: ListTile(
@@ -378,58 +238,6 @@ class _ColorChip extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// 同步检查间隔选择器（控制 pull 定时检查频率）。
-class _AutoSyncIntervalSelector extends StatelessWidget {
-  const _AutoSyncIntervalSelector({required this.ref});
-
-  final WidgetRef ref;
-
-  @override
-  Widget build(BuildContext context) {
-    final interval = ref.watch(autoSyncIntervalProvider);
-    final theme = Theme.of(context);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text('同步检查间隔', style: theme.textTheme.bodyMedium),
-            ),
-            DropdownButton<int>(
-              value: interval,
-              items: const [
-                DropdownMenuItem(value: 5, child: Text('5 分钟')),
-                DropdownMenuItem(value: 10, child: Text('10 分钟')),
-                DropdownMenuItem(value: 15, child: Text('15 分钟')),
-                DropdownMenuItem(value: 30, child: Text('30 分钟')),
-              ],
-              onChanged: (v) {
-                if (v != null) {
-                  ref.read(autoSyncIntervalProvider.notifier).state = v;
-                  // 重启定时器使新间隔立即生效（不重置同步状态）
-                  ref.read(syncControllerProvider.notifier).restartAutoSyncTimer();
-                }
-              },
-            ),
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text(
-            'dirty 任务 10 秒后自动上传；上传后 5 分钟未拉取则拉取；'
-            '超过此处设置的间隔未拉取则强制拉取。',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.outline,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

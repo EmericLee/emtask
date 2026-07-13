@@ -2539,7 +2539,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                   offset: const Offset(-1.5, 1.5),
                   blurRadius: 2,
                   spreadRadius: 0,
-                  color: Colors.black.withValues(alpha: 0.04),
+                  color: Colors.black.withValues(alpha: 0.08),
                 ),
               ],
             ),

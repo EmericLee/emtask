@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/calendars/calendars_page.dart';
-import '../features/diagnostics/diagnostics_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/sync/sync_page.dart';
 import '../features/tasks/task_detail_page.dart';
@@ -42,11 +41,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: '/sync',
             name: 'sync',
             builder: (context, state) => const SyncPage(),
-          ),
-          GoRoute(
-            path: '/diagnostics',
-            name: 'diagnostics',
-            builder: (context, state) => const DiagnosticsPage(),
           ),
           GoRoute(
             path: '/settings',
@@ -154,11 +148,6 @@ class _AppScaffoldState extends State<_AppScaffold>
                 label: Text('同步'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.bug_report_outlined),
-                selectedIcon: Icon(Icons.bug_report),
-                label: Text('诊断'),
-              ),
-              NavigationRailDestination(
                 icon: Icon(Icons.settings_outlined),
                 selectedIcon: Icon(Icons.settings),
                 label: Text('设置'),
@@ -182,8 +171,7 @@ class _AppScaffoldState extends State<_AppScaffold>
     if (location.startsWith('/tasks')) return 0;
     if (location.startsWith('/calendars')) return 1;
     if (location.startsWith('/sync')) return 2;
-    if (location.startsWith('/diagnostics')) return 3;
-    if (location.startsWith('/settings')) return 4;
+    if (location.startsWith('/settings')) return 3;
     return 0;
   }
 
@@ -191,8 +179,7 @@ class _AppScaffoldState extends State<_AppScaffold>
         0 => '/tasks',
         1 => '/calendars',
         2 => '/sync',
-        3 => '/diagnostics',
-        4 => '/settings',
+        3 => '/settings',
         _ => '/tasks',
       };
 }
