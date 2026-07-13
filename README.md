@@ -1,8 +1,8 @@
 # EM Task
 
-[![GitHub Stars](https://img.shields.io/github/stars/emericlee/emtask.svg)](https://github.com/emericlee/emtask)
-[![GitHub License](https://img.shields.io/github/license/emericlee/emtask.svg)](https://github.com/emericlee/emtask/blob/main/LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/emericlee/emtask.svg)](https://github.com/emericlee/emtask/releases)
+[![GitHub Stars](https://img.shields.io/github/stars/EmericLee/emtask.svg)](https://github.com/EmericLee/emtask)
+[![GitHub License](https://img.shields.io/github/license/EmericLee/emtask.svg)](https://github.com/EmericLee/emtask/blob/main/LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/EmericLee/emtask.svg)](https://github.com/EmericLee/emtask/releases)
 
 **跨平台任务管理器** — 支持 CalDAV / Nextcloud Tasks 同步，基于 Flutter 构建。
 
@@ -22,7 +22,7 @@
 - **Multiple Themes**: 9 preset colors with Material 3 dynamic color
 
 ### Download
-- GitHub Releases: https://github.com/emericlee/emtask/releases
+- GitHub Releases: https://github.com/EmericLee/emtask/releases
 
 ### Tech Stack
 - Flutter 3.32.5 + Dart 3.8
@@ -80,7 +80,7 @@
 
 ### 从 Release 下载
 
-从 [GitHub Releases](https://github.com/emericlee/emtask/releases) 页面下载适合您平台的版本：
+从 [GitHub Releases](https://github.com/EmericLee/emtask/releases) 页面下载适合您平台的版本：
 
 | 平台 | 下载格式 | 说明 |
 |---|---|---|
@@ -169,7 +169,7 @@ em_task/
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/emericlee/emtask.git
+git clone https://github.com/EmericLee/emtask.git
 cd em_task
 
 # 2. 安装依赖
