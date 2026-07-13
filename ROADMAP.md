@@ -58,15 +58,16 @@ lib/
 - [x] UI 骨架：任务列表、详情/编辑、日历管理、同步状态、设置
 - [x] 桌面端 NavigationRail 自适应布局
 - [x] Linux/UOS 窗口标题与 GTK 集成
+- [x] Nextcloud 实测联调（认证、ctag、ETag、sync-collection 增量同步）
+- [x] 子任务（parentUid + RELATED-TO 树形展示、拖拽排序、一键创建）
 
 ## 待开发（按优先级）
 
 ### P0 - 核心可用性
-- [ ] Nextcloud 实测联调（认证、ctag、ETag 乐观并发）
+- [x] Nextcloud 实测联调（认证、ctag、ETag 乐观并发）
 - [ ] 任务排序与筛选（按截止/优先级/状态/日历）
 - [ ] 任务搜索
-- [ ] 子任务（RELATED-TO 树形展示）
-- [ ] 重复任务（RRULE 解析与展开）
+- [x] 子任务（RELATED-TO 树形展示）
 - [ ] 通知（截止时间提醒，flutter_local_notifications）
 - [ ] 冲突处理策略（远端优先 / 本地优先 / 手动合并 UI）
 
