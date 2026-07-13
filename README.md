@@ -6,7 +6,7 @@
 
 **跨平台任务管理器** — 支持 CalDAV / Nextcloud Tasks 同步，基于 Flutter 构建。
 
-[Features](#features) • [特性](#-特性功能) • [Download](#download) • [下载](#-使用下载) • [Development](#development) • [开发](#-开发指南)
+[Features](#features) • [特性](#-特性功能) • [Download](#download) • [下载](#-使用下载) • [Development](#development) • [开发](#-开发指南) • [English Version](README_EN.md)
 
 ---
 
