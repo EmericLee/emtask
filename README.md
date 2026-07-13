@@ -6,7 +6,29 @@
 
 **跨平台任务管理器** — 支持 CalDAV / Nextcloud Tasks 同步，基于 Flutter 构建。
 
-[特性](#-特性功能) • [下载](#-使用下载) • [开发](#-开发指南)
+[Features](#features) • [特性](#-特性功能) • [Download](#download) • [下载](#-使用下载) • [Development](#development) • [开发](#-开发指南)
+
+---
+
+## English Summary
+
+**EM Task** is a cross-platform task manager built with Flutter, supporting CalDAV / Nextcloud Tasks synchronization. It runs on Windows, Linux, Android, and UOS (Chinese Linux distribution).
+
+### Key Features
+- **Cross-platform**: Windows / Linux / Android / UOS
+- **CalDAV Sync**: Bi-directional sync with Nextcloud Tasks
+- **Task Tree**: Parent-child hierarchy, drag-and-drop, folding
+- **PDF Export**: Built-in Chinese fonts, offline support
+- **Multiple Themes**: 9 preset colors with Material 3 dynamic color
+
+### Download
+- GitHub Releases: https://github.com/emericlee/emtask/releases
+
+### Tech Stack
+- Flutter 3.32.5 + Dart 3.8
+- Riverpod state management
+- Drift (SQLite) database
+- go_router navigation
 
 ---
 
