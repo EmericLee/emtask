@@ -51,12 +51,13 @@ class LogEntry {
   }
 }
 
-/// 全局日志服务（内存环形缓冲 + 广播流）。
+/// 全局日志服务（内存环形缓冲 + 广播流 + 日志级别过滤）。
 ///
 /// 用法：
 /// ```dart
 /// AppLogger.instance.i('tag', 'message');
 /// AppLogger.instance.e('tag', 'crash', error, stack);
+/// AppLogger.instance.minLevel = LogLevel.debug; // 调整日志级别
 /// ```
 class AppLogger {
   AppLogger._();
@@ -74,10 +75,20 @@ class AppLogger {
   /// 当前全部日志（只读副本）。
   List<LogEntry> get entries => List.unmodifiable(_entries);
 
-  /// 是否启用 debug 级别输出到 print。
+  /// 是否启用输出到 print。
   bool enablePrint = true;
 
+  /// 最小日志级别，低于此级别的日志将被过滤。
+  /// 默认值为 [LogLevel.info]，即 debug 级别日志默认不记录。
+  LogLevel minLevel = LogLevel.info;
+
+  bool _shouldLog(LogLevel level) {
+    return level.index >= minLevel.index;
+  }
+
   void _add(LogEntry e) {
+    if (!_shouldLog(e.level)) return;
+
     _entries.addLast(e);
     while (_entries.length > _maxLines) {
       _entries.removeFirst();

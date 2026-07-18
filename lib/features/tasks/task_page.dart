@@ -391,23 +391,23 @@ class TaskPage extends ConsumerWidget {
       appBar: AppBar(
         backgroundColor: Colors.white,
         scrolledUnderElevation: 0,
-        title: const Row(
+        title: Row(
           children: [
-            Icon(
+            const Icon(
               Icons.checklist_outlined,
               size: 32,
             ),
-            SizedBox(width: 10),
-            Text('任务'),
+            const SizedBox(width: 10),
+            const Text('任务'),
+            const SizedBox(width: 16),
+            _ViewModeSwitch(
+              current: viewMode,
+              onSelected: (m) =>
+                  ref.read(_taskViewModeProvider.notifier).state = m,
+            ),
           ],
         ),
         actions: [
-          // 视图切换：当前 / 全部 / 完成
-          _ViewModeSwitch(
-            current: viewMode,
-            onSelected: (m) =>
-                ref.read(_taskViewModeProvider.notifier).state = m,
-          ),
           // 按清单过滤（仅显示已启用同步的清单）
           _CalendarFilterMenu(
             syncedCalendars: ref.watch(_syncedCalendarListProvider),
@@ -1127,7 +1127,7 @@ class _TagFilterMenu extends StatelessWidget {
 }
 
 /// 同步按钮：未同步数据时高亮，并显示角标。
-class _SyncButton extends StatelessWidget {
+class _SyncButton extends StatefulWidget {
   const _SyncButton({
     required this.running,
     required this.pendingCount,
@@ -1139,30 +1139,65 @@ class _SyncButton extends StatelessWidget {
   final VoidCallback onPressed;
 
   @override
+  State<_SyncButton> createState() => _SyncButtonState();
+}
+
+class _SyncButtonState extends State<_SyncButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _rotationController;
+
+  @override
+  void initState() {
+    super.initState();
+    _rotationController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    );
+    if (widget.running) _rotationController.repeat();
+  }
+
+  @override
+  void didUpdateWidget(_SyncButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.running && !_rotationController.isAnimating) {
+      _rotationController.repeat();
+    } else if (!widget.running && _rotationController.isAnimating) {
+      _rotationController.stop();
+      _rotationController.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _rotationController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final hasPending = pendingCount > 0;
+    final hasPending = widget.pendingCount > 0;
     final color = hasPending ? scheme.primary : scheme.outline;
 
     return Stack(
       alignment: Alignment.center,
       children: [
         IconButton(
-          tooltip: hasPending ? '同步（$pendingCount 项待同步）' : '同步',
-          icon: running
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(color),
-                  ),
-                )
-              : Icon(Icons.sync, color: color),
-          onPressed: running ? null : onPressed,
+          tooltip: hasPending ? '同步（${widget.pendingCount} 项待同步）' : '同步',
+          icon: SizedBox(
+            width: 24,
+            height: 24,
+            child: widget.running
+                ? RotationTransition(
+                    turns: _rotationController,
+                    child: Icon(Icons.sync, color: color, size: 24),
+                  )
+                : Icon(Icons.sync, color: color, size: 24),
+          ),
+          onPressed: widget.running ? null : widget.onPressed,
         ),
-        if (hasPending && !running)
+        if (hasPending && !widget.running)
           Positioned(
             right: 4,
             top: 4,
@@ -1175,7 +1210,7 @@ class _SyncButton extends StatelessWidget {
                 border: Border.all(color: Colors.white, width: 1.5),
               ),
               child: Text(
-                pendingCount > 99 ? '99+' : '$pendingCount',
+                widget.pendingCount > 99 ? '99+' : '${widget.pendingCount}',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.labelSmall?.copyWith(
                   color: scheme.onError,
@@ -1437,14 +1472,23 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   }
 
   /// 在指定日历下创建新任务（排序最前），激活详情页并进入内联标题编辑。
+  ///
+  /// 根据当前视图模式设置默认属性，确保新任务在当前视图可见：
+  /// - important（重要）：默认优先级 medium，满足"设置了优先级"过滤条件
+  /// - current（当前）：默认状态 inProcess，满足"进行中"过滤条件
+  /// - all/completed：无额外默认属性
   Future<void> _createTaskInCalendar(
       String calendarUrl, List<Task> rootSiblings) async {
     final sortOrder = _computeFirstSortOrder(rootSiblings);
+    final viewMode = ref.read(_taskViewModeProvider);
     final task = Task.create(
       calendarUrl: calendarUrl,
       summary: '',
     ).copyWith(
       status: TaskStatus.inProcess,
+      priority: viewMode == _TaskViewMode.important
+          ? TaskPriority.medium
+          : TaskPriority.none,
       sortOrder: sortOrder,
     );
     final repo = ref.read(taskRepositoryProvider);
@@ -1455,14 +1499,23 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   }
 
   /// 在指定父任务下创建子任务（排序第一），展开父任务，激活详情页并进入内联标题编辑。
+  ///
+  /// 根据当前视图模式设置默认属性，确保子任务在当前视图可见：
+  /// - important（重要）：默认优先级 medium，满足"设置了优先级"过滤条件
+  /// - current（当前）：默认状态 inProcess，满足"进行中"过滤条件
+  /// - all/completed：无额外默认属性
   Future<void> _createSubtask(Task parent, List<Task> childSiblings) async {
     final sortOrder = _computeFirstSortOrder(childSiblings);
+    final viewMode = ref.read(_taskViewModeProvider);
     final task = Task.create(
       calendarUrl: parent.calendarUrl,
       summary: '',
       parentUid: parent.uid,
     ).copyWith(
       status: TaskStatus.inProcess,
+      priority: viewMode == _TaskViewMode.important
+          ? TaskPriority.medium
+          : TaskPriority.none,
       sortOrder: sortOrder,
     );
     final repo = ref.read(taskRepositoryProvider);
@@ -2143,33 +2196,43 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       ));
     }
 
-    // 新兄弟组排序值（乐观 flat 中目标父任务下的顺序）
-    final newSiblingIds = <int>[];
+    // Nextcloud 排序算法：仅更新被移动任务的 sortOrder。
+    // 从乐观 flat 中提取新兄弟组（目标父任务下的所有任务，含被移动任务），
+    // 找到被移动任务在新位置的前后邻居，用 ±1 递推计算新 sortOrder。
+    // 这样单次拖动只触发 1 个任务的 dirty，避免全组重排带来的连锁同步。
+    final newSiblings = <_FlatNode>[];
     for (final node in optimisticFlat) {
-      final isMoved = node.task.uid == movedTask.uid;
-      final isChildOfNewParent =
-          !isMoved && node.task.parentUid == newParentUid;
-      if (isMoved || isChildOfNewParent) {
-        newSiblingIds.add(node.task.localId);
+      if (node.task.uid == movedTask.uid ||
+          node.task.parentUid == newParentUid) {
+        newSiblings.add(node);
       }
     }
-    if (newSiblingIds.isNotEmpty) {
-      await saveSortOrders(ref, newSiblingIds);
+    final movedIndexInNew =
+        newSiblings.indexWhere((n) => n.task.uid == movedTask.uid);
+    final prevSort = movedIndexInNew > 0
+        ? newSiblings[movedIndexInNew - 1].task.sortOrder
+        : null;
+    final nextSort = movedIndexInNew < newSiblings.length - 1
+        ? newSiblings[movedIndexInNew + 1].task.sortOrder
+        : null;
+
+    final exhausted = await saveTaskSortOrder(
+      ref,
+      taskId: movedTask.localId,
+      prevSort: prevSort,
+      nextSort: nextSort,
+    );
+
+    // 整数空间耗尽（前后邻居 sortOrder 相邻）时，对新兄弟组做稀疏重排。
+    // 此场景罕见（连续在同一位置插入多次才会触发），触发时全组重排为间距 1000。
+    if (exhausted && newSiblings.length > 1) {
+      final siblingIds = newSiblings.map((n) => n.task.localId).toList();
+      await saveSortOrders(ref, siblingIds);
     }
 
-    // 父任务变更时，同时刷新原兄弟组的排序值。
-    if (newParentUid != oldParentUid) {
-      final oldSiblingIds = <int>[];
-      for (final node in remaining) {
-        if (node.task.parentUid == oldParentUid &&
-            node.task.uid != movedTask.uid) {
-          oldSiblingIds.add(node.task.localId);
-        }
-      }
-      if (oldSiblingIds.isNotEmpty) {
-        await saveSortOrders(ref, oldSiblingIds);
-      }
-    }
+    // 父任务变更时，原兄弟组无需更新：
+    // 移走一个任务后，剩余任务的 sortOrder 仍然保持严格单调，相对顺序未变。
+    // 这是 Nextcloud ±1 递推算法相比全量重排的重要优势——移走任务零额外开销。
 
     // 写完后主动检测一次是否已追上（某些情况下 didUpdateWidget 可能先到）。
     if (mounted) _maybeClearOptimistic();
@@ -2612,20 +2675,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                                         ),
                                       ),
                               ),
-                              // 状态图标（非"需要操作"时显示）
-                              if (widget.task.status != TaskStatus.needsAction)
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 4),
-                                  child: Tooltip(
-                                    message: _statusLabel(widget.task.status),
-                                    child: Icon(
-                                      _statusIcon(widget.task.status),
-                                      size: 14,
-                                      color: _statusColor(
-                                          widget.task.status, scheme),
-                                    ),
-                                  ),
-                                ),
+                              
                               // 完成度（0~100 之间显示）
                               if (widget.task.percent > 0 &&
                                   widget.task.percent < 100)

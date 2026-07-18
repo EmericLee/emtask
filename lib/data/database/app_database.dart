@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 
+import '../../core/utils/app_logger.dart';
 import '../../domain/entities/calendar.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
@@ -180,12 +181,15 @@ class AppDatabase extends _$AppDatabase {
     String? etag,
     String? href,
   }) async {
+    final now = DateTime.now().toUtc();
     await (update(tasks)..where((t) => t.id.equals(localId))).write(
       TasksCompanion(
         dirty: const Value(false),
         deleted: const Value(false),
         etag: etag != null ? Value(etag) : const Value.absent(),
         href: href != null ? Value(href) : const Value.absent(),
+        lastModified: Value(now),
+        localModifiedAt: Value(now),
       ),
     );
   }
@@ -203,12 +207,30 @@ class AppDatabase extends _$AppDatabase {
       );
       await into(tasks).insert(companion);
     } else {
-      // 远端优先：用远端数据覆盖本地（若本地正在 dirty，则需冲突处理，
-      // 此处简化为远端优先；后续 SyncRepository 可加冲突策略）。
+      if (existing.dirty) {
+        AppLogger.instance.w('Sync', '跳过覆盖 dirty 任务: ${task.uid} (本地有未上传修改)');
+        return;
+      }
+
+      if (existing.etag != null && existing.etag == task.etag) {
+        return;
+      }
+
+      final localModified = existing.localModifiedAt;
+      final remoteModified = task.lastModified;
+      if (localModified != null && remoteModified != null) {
+        final localUtc = localModified.toUtc();
+        final remoteUtc = remoteModified.toUtc();
+        if (localUtc.isAfter(remoteUtc)) {
+          AppLogger.instance.w('Sync', '跳过覆盖：本地修改(${localModified} -> ${localUtc})晚于远端(${remoteModified}) uid=${task.uid}');
+          return;
+        }
+      }
+
       await (update(tasks)..where((t) => t.id.equals(existing.localId)))
           .write(
         _toCompanion(task, isNew: false).copyWith(
-          id: const Value.absent(), // 不更新主键
+          id: const Value.absent(),
           dirty: const Value(false),
           deleted: const Value(false),
         ),
@@ -228,16 +250,67 @@ class AppDatabase extends _$AppDatabase {
     await (delete(tasks)..where((t) => t.href.equals(href))).go();
   }
 
-  /// 批量更新任务排序值（手动拖拽排序后调用）。
+  /// 单任务排序更新（Nextcloud Tasks 排序算法）。
+  ///
+  /// 算法对齐 nextcloud/tasks PR #1169（Improve calculating new task sort order）：
+  /// - 优先 newSort = next.sortOrder - 1（拖到某任务之前，留出向后插入空间）
+  /// - 否则 newSort = prev.sortOrder + 1（拖到末尾或唯一任务）
+  /// - 钳到 ≥ 0
+  /// - 只更新被移动任务本身，不修改其他任务
+  ///
+  /// 当前后邻居的 sortOrder 相邻（nextSort - prevSort <= 1）时，整数空间耗尽，
+  /// 返回 true 提示调用方调用 [updateSortOrders] 做整组稀疏重排。
+  ///
+  /// 参数：
+  ///   [taskId] 被移动任务 localId
+  ///   [prevSort] 新位置前一个兄弟任务的 sortOrder（拖到开头时为 null）
+  ///   [nextSort] 新位置后一个兄弟任务的 sortOrder（拖到末尾时为 null）
+  /// 返回：true 表示整数空间耗尽，需要整组重排
+  Future<bool> updateTaskSortOrder({
+    required int taskId,
+    int? prevSort,
+    int? nextSort,
+  }) async {
+    final now = DateTime.now().toUtc();
+    int newSort;
+    if (nextSort != null && (prevSort == null || nextSort - 1 > prevSort)) {
+      newSort = nextSort - 1;
+    } else if (prevSort != null) {
+      newSort = prevSort + 1;
+    } else {
+      newSort = 0;
+    }
+    if (newSort < 0) newSort = 0;
+
+    // 整数空间耗尽检测：前后邻居都存在且差值 ≤ 1，无法在中间插入新整数。
+    final exhausted =
+        prevSort != null && nextSort != null && nextSort - prevSort <= 1;
+
+    await (update(tasks)..where((t) => t.id.equals(taskId))).write(
+      TasksCompanion(
+        sortOrder: Value(newSort),
+        dirty: const Value(true),
+        localModifiedAt: Value(now),
+      ),
+    );
+
+    return exhausted;
+  }
+
+  /// 兜底重排：将整组任务分配稀疏的 sortOrder（间距 1000）。
+  ///
+  /// 当 [updateTaskSortOrder] 检测到整数空间耗尽时调用此方法。
+  /// 稀疏化后，后续单任务移动有足够空间用 ±1 递推，避免频繁触发重排。
   /// [orderedIds] 为按新顺序排列的任务 localId 列表。
   Future<void> updateSortOrders(List<int> orderedIds) async {
+    if (orderedIds.isEmpty) return;
     final now = DateTime.now().toUtc();
     await batch((b) {
       for (var i = 0; i < orderedIds.length; i++) {
         b.update(
           tasks,
           TasksCompanion(
-            sortOrder: Value(i),
+            sortOrder: Value(i * 1000),
             dirty: const Value(true),
             localModifiedAt: Value(now),
           ),

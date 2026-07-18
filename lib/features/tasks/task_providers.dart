@@ -69,7 +69,33 @@ Future<Task> createTask(
   return repo.create(task);
 }
 
-/// 批量保存手动排序结果（标记 dirty 以便同步到 Nextcloud）。
+/// 单任务排序更新（Nextcloud Tasks 排序算法）。
+///
+/// 仅更新被移动任务的 sortOrder，返回 true 表示整数空间耗尽，
+/// 调用方应接着调用 [saveSortOrders] 对该组做稀疏重排。
+///
+/// 参数：
+///   [taskId] 被移动任务 localId
+///   [prevSort] 新位置前一个兄弟任务的 sortOrder（拖到开头时为 null）
+///   [nextSort] 新位置后一个兄弟任务的 sortOrder（拖到末尾时为 null）
+Future<bool> saveTaskSortOrder(
+  WidgetRef ref, {
+  required int taskId,
+  int? prevSort,
+  int? nextSort,
+}) {
+  final repo = ref.read(taskRepositoryProvider);
+  return repo.updateTaskSortOrder(
+    taskId: taskId,
+    prevSort: prevSort,
+    nextSort: nextSort,
+  );
+}
+
+/// 兜底重排：将整组任务分配稀疏 sortOrder（间距 1000）。
+///
+/// 在 [saveTaskSortOrder] 返回 true（整数空间耗尽）时调用，
+/// 或在需要强制重排某组的场景使用。标记 dirty 以便同步到 Nextcloud。
 Future<void> saveSortOrders(
   WidgetRef ref,
   List<int> orderedLocalIds,

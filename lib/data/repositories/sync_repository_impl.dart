@@ -27,7 +27,6 @@ class SyncRepositoryImpl implements SyncRepository {
 
   @override
   Future<SyncResult> fullSync({bool allDayDates = false}) async {
-    AppLogger.instance.i(_tag, '---- 开始全量同步 ----');
     final pushResult = await push(allDayDates: allDayDates);
     if (pushResult.error != null) {
       AppLogger.instance.e(_tag, 'push 失败，中止全量同步（不执行 pull）');
@@ -44,7 +43,6 @@ class SyncRepositoryImpl implements SyncRepository {
 
   @override
   Future<SyncResult> sync({bool allDayDates = false}) async {
-    AppLogger.instance.i(_tag, '==== 开始完整同步 ====');
     try {
       final pushResult = await push(allDayDates: allDayDates);
       // push 失败时停止同步，继续 pull 会用远端数据覆盖本地修改
@@ -58,7 +56,7 @@ class SyncRepositoryImpl implements SyncRepository {
         );
       }
       final pullResult = await pull();
-      final r = SyncResult(
+      return SyncResult(
         uploaded: pushResult.uploaded,
         downloaded: pullResult.downloaded,
         updated: pullResult.updated,
@@ -66,9 +64,6 @@ class SyncRepositoryImpl implements SyncRepository {
         conflicts: 0,
         finishedAt: DateTime.now().toUtc(),
       );
-      AppLogger.instance.i(_tag,
-          '==== 完整同步结束 ↑${r.uploaded} ↓${r.downloaded} ~${r.updated} ✗${r.deleted} ====');
-      return r;
     } catch (e, s) {
       AppLogger.instance.e(_tag, '完整同步异常', error: e, stackTrace: s);
       return SyncResult(
@@ -80,7 +75,6 @@ class SyncRepositoryImpl implements SyncRepository {
 
   @override
   Future<SyncResult> push({bool allDayDates = false}) async {
-    AppLogger.instance.i(_tag, '---- 开始 push ----');
     var uploaded = 0;
     var deleted = 0;
     try {
@@ -167,7 +161,14 @@ class SyncRepositoryImpl implements SyncRepository {
         deleted++;
       }
 
-      AppLogger.instance.i(_tag, '---- push 结束 ↑$uploaded ✗$deleted ----');
+      // 注意：此处不主动刷新日历的 syncToken。
+      // sync-collection 响应中的 resources 包含自旧 token 以来的所有变化
+      // （含其他客户端的修改），若只取新 token 而丢弃 resources 会造成丢更新。
+      // token 的更新交给随后的 pull 自然完成：
+      // - pull 用旧 token 请求，服务器返回 [自己刚 push 的 + 别人修改的] + 新 token
+      // - 自己刚 push 的任务会被 upsertTaskFromRemote 的 etag 短路跳过
+      // - 别人修改的任务被正常 upsert，不丢更新
+      AppLogger.instance.i(_tag, 'push 完成: ↑$uploaded 上传 ✗$deleted 删除');
       return SyncResult(
         uploaded: uploaded,
         deleted: deleted,
@@ -188,16 +189,18 @@ class SyncRepositoryImpl implements SyncRepository {
   Future<SyncResult> pull() => _pullInternal(forceFullPull: false);
 
   Future<SyncResult> _pullInternal({required bool forceFullPull}) async {
-    AppLogger.instance.i(_tag, '---- 开始 pull ${forceFullPull ? "(全量)" : ""} ----');
+    final pullMode = forceFullPull ? '强制全量' : '增量优先';
+    AppLogger.instance.i(_tag, 'pull 模式: $pullMode');
     var downloaded = 0;
     var updated = 0;
     var deleted = 0;
+    var fullPullCount = 0;
+    var incrementalCount = 0;
+    var fallbackCount = 0;
     try {
-      // 先从远端刷新日历列表写入本地数据库
       final remoteCalendars = await _calendars.refreshFromRemote();
       AppLogger.instance.i(_tag, '本地日历数: ${remoteCalendars.length}');
 
-      var processedCalendars = 0;
       for (final cal in remoteCalendars) {
         if (!cal.syncEnabled) {
           AppLogger.instance.d(_tag, '跳过日历(未启用同步): ${cal.displayName}');
@@ -207,57 +210,59 @@ class SyncRepositoryImpl implements SyncRepository {
           AppLogger.instance.d(_tag, '跳过日历(不支持VTODO): ${cal.displayName}');
           continue;
         }
-        processedCalendars++;
 
         if (forceFullPull) {
-          // 全量同步：直接走 listVTodos 全量拉取，不使用 sync-collection
+          AppLogger.instance.i(_tag, '全量拉取日历: ${cal.displayName}');
           final counts = await _fullPullCalendar(cal);
           downloaded += counts.downloaded;
           deleted += counts.deleted;
           updated++;
+          fullPullCount++;
           continue;
         }
 
-        // 优先使用 sync-collection 增量同步（RFC 6578）
         try {
           final result = await _client.syncCollection(
             calendarHref: cal.url,
             syncToken: cal.syncToken,
           );
           AppLogger.instance.i(_tag,
-              'sync-collection [${cal.displayName}]: ↑${result.resources.length} ✗${result.deletedHrefs.length}');
+              '增量拉取 [${cal.displayName}]: ↑${result.resources.length} ✗${result.deletedHrefs.length}');
 
-          // 处理新增/更新的任务
           for (final r in result.resources) {
             if (await _processRemoteResource(r, cal.url)) {
               downloaded++;
             }
           }
 
-          // 处理远端已删除的任务
           for (final href in result.deletedHrefs) {
             await _db.hardDeleteByHref(href);
             deleted++;
           }
 
-          // 更新 syncToken
           await _calendars.update(cal.copyWith(
             syncToken: result.syncToken,
           ));
           updated++;
+          incrementalCount++;
         } on CalDavException catch (e) {
-          // sync-collection 失败（token 失效或服务器不支持），回退全量拉取
           AppLogger.instance.w(_tag,
-              'sync-collection 失败，回退全量: ${cal.displayName}  $e');
+              '增量拉取失败，回退全量 [${cal.displayName}]: $e');
           final counts = await _fullPullCalendar(cal);
           downloaded += counts.downloaded;
           deleted += counts.deleted;
           updated++;
+          fallbackCount++;
         }
       }
 
+      final modeSummary = [
+        if (incrementalCount > 0) '增量$incrementalCount',
+        if (fullPullCount > 0) '全量$fullPullCount',
+        if (fallbackCount > 0) '回退全量$fallbackCount',
+      ].join('+');
       AppLogger.instance.i(_tag,
-          '---- pull 结束 ↓$downloaded ~$updated ✗$deleted (处理$processedCalendars个日历) ----');
+          'pull 完成: ↓$downloaded 下载 ~$updated 日历 ✗$deleted 删除 (模式:$modeSummary)');
       return SyncResult(
         downloaded: downloaded,
         updated: updated,

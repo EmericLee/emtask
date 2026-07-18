@@ -10,8 +10,6 @@ import '../../data/providers.dart';
 import '../diagnostics/diagnostics_providers.dart';
 import 'sync_providers.dart';
 
-/// 同步页：账户配置 + 同步状态 + 连接测试 + 同步设置。
-/// 日志通过 AppBar 按钮以弹窗形式打开。
 class SyncPage extends ConsumerStatefulWidget {
   const SyncPage({super.key});
 
@@ -20,14 +18,13 @@ class SyncPage extends ConsumerStatefulWidget {
 }
 
 class _SyncPageState extends ConsumerState<SyncPage> {
-  // — 账户配置 —
   final _urlCtrl = TextEditingController();
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
   bool _trustCert = false;
   bool _saving = false;
-  bool _hasAccount = false; // 已有账户时显示缩略信息
+  bool _hasAccount = false;
 
   @override
   void initState() {
@@ -115,7 +112,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // — 账户配置 —
           const _SectionTitle(title: 'CalDAV 账户'),
           const SizedBox(height: 8),
           if (_hasAccount)
@@ -123,8 +119,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
           else
             _buildAccountForm(),
           const SizedBox(height: 24),
-
-          // — 同步状态 —
           const _SectionTitle(title: '同步状态'),
           const SizedBox(height: 8),
           Card(
@@ -220,8 +214,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
             ],
           ),
           const SizedBox(height: 24),
-
-          // — 连接测试 —
           const _SectionTitle(title: '连接测试'),
           const SizedBox(height: 8),
           Card(
@@ -268,8 +260,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
             ),
           ),
           const SizedBox(height: 24),
-
-          // — 同步设置 —
           const _SectionTitle(title: '同步设置'),
           const SizedBox(height: 8),
           Card(
@@ -283,13 +273,11 @@ class _SyncPageState extends ConsumerState<SyncPage> {
     );
   }
 
-  /// 账户缩略信息卡片
   Widget _buildAccountSummary(ThemeData theme) {
     final name = _nameCtrl.text.trim().isEmpty
         ? _userCtrl.text.trim()
         : _nameCtrl.text.trim();
     final url = _urlCtrl.text.trim();
-    // 截断过长的 URL
     final displayUrl = url.length > 40 ? '${url.substring(0, 37)}...' : url;
 
     return Card(
@@ -343,7 +331,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
     );
   }
 
-  /// 账户编辑表单
   Widget _buildAccountForm() {
     return Card(
       child: Padding(
@@ -427,7 +414,6 @@ class _SyncPageState extends ConsumerState<SyncPage> {
   }
 }
 
-/// 区块标题
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title});
   final String title;
@@ -462,7 +448,6 @@ class _StatRow extends StatelessWidget {
   }
 }
 
-/// 连接测试结果展示
 class _ResultView extends StatelessWidget {
   const _ResultView({required this.result});
   final ConnectionTestResult result;
@@ -544,7 +529,6 @@ class _ResultView extends StatelessWidget {
   }
 }
 
-/// 同步检查间隔选择器
 class _AutoSyncIntervalSelector extends StatelessWidget {
   const _AutoSyncIntervalSelector({required this.ref});
 
@@ -597,8 +581,6 @@ class _AutoSyncIntervalSelector extends StatelessWidget {
 //  日志弹窗
 // ════════════════════════════════════════════════════════════════
 
-/// 日志弹窗：独立 StatefulWidget，自行订阅日志流。
-/// 使用 SelectionArea 包裹列表，支持跨行选择。
 class _LogDialog extends StatefulWidget {
   const _LogDialog();
 
@@ -647,7 +629,6 @@ class _LogDialogState extends State<_LogDialog> {
         height: MediaQuery.of(context).size.height * 0.7,
         child: Column(
           children: [
-            // 标题栏
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               child: Row(
@@ -655,16 +636,6 @@ class _LogDialogState extends State<_LogDialog> {
                   Text('日志 (${_logs.length})',
                       style: theme.textTheme.titleMedium),
                   const Spacer(),
-                  if (_logs.isNotEmpty)
-                    IconButton(
-                      icon: const Icon(Icons.cleaning_services_outlined,
-                          size: 20),
-                      tooltip: '清空日志',
-                      onPressed: () => setState(() {
-                        AppLogger.instance.clear();
-                        _logs.clear();
-                      }),
-                    ),
                   IconButton(
                     icon: const Icon(Icons.close, size: 20),
                     tooltip: '关闭',
@@ -673,7 +644,6 @@ class _LogDialogState extends State<_LogDialog> {
                 ],
               ),
             ),
-            // 工具栏
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -684,12 +654,52 @@ class _LogDialogState extends State<_LogDialog> {
                   Switch(
                     value: _autoScroll,
                     onChanged: (v) => setState(() => _autoScroll = v),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
+                  const SizedBox(width: 12),
+                  DropdownButton<LogLevel>(
+                    value: AppLogger.instance.minLevel,
+                    items: const [
+                      DropdownMenuItem(
+                        value: LogLevel.debug,
+                        child: Text('DEBUG', style: TextStyle(fontSize: 12)),
+                      ),
+                      DropdownMenuItem(
+                        value: LogLevel.info,
+                        child: Text('INFO', style: TextStyle(fontSize: 12)),
+                      ),
+                      DropdownMenuItem(
+                        value: LogLevel.warning,
+                        child: Text('WARN', style: TextStyle(fontSize: 12)),
+                      ),
+                      DropdownMenuItem(
+                        value: LogLevel.error,
+                        child: Text('ERROR', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) {
+                        AppLogger.instance.minLevel = v;
+                      }
+                    },
+                    underline: const SizedBox(),
+                  ),
+                  const SizedBox(width: 8),
+                  if (_logs.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.cleaning_services_outlined,
+                          size: 18),
+                      tooltip: '清空日志',
+                      onPressed: () => setState(() {
+                        AppLogger.instance.clear();
+                        _logs.clear();
+                      }),
+                      padding: const EdgeInsets.all(4),
+                    ),
                 ],
               ),
             ),
             const Divider(height: 1),
-            // 日志列表 — SelectionArea 支持跨行选择
             Expanded(
               child: _logs.isEmpty
                   ? const Center(

@@ -53,6 +53,18 @@ class TaskRepositoryImpl implements TaskRepository {
   Future<void> upsertFromRemote(Task task) => _db.upsertTaskFromRemote(task);
 
   @override
+  Future<bool> updateTaskSortOrder({
+    required int taskId,
+    int? prevSort,
+    int? nextSort,
+  }) =>
+      _db.updateTaskSortOrder(
+        taskId: taskId,
+        prevSort: prevSort,
+        nextSort: nextSort,
+      );
+
+  @override
   Future<void> updateSortOrders(List<int> orderedIds) =>
       _db.updateSortOrders(orderedIds);
 }

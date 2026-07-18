@@ -34,6 +34,16 @@ abstract class TaskRepository {
   /// 用远端数据替换本地任务（同步下载用）
   Future<void> upsertFromRemote(Task task);
 
-  /// 批量更新任务排序值（手动拖拽排序后调用）
+  /// 单任务排序更新（Nextcloud Tasks 算法）。
+  ///
+  /// 仅更新被移动任务的 sortOrder，返回 true 表示整数空间耗尽需兜底重排。
+  /// 详见 AppDatabase.updateTaskSortOrder 的算法说明。
+  Future<bool> updateTaskSortOrder({
+    required int taskId,
+    int? prevSort,
+    int? nextSort,
+  });
+
+  /// 兜底重排：整组任务分配稀疏 sortOrder（手动拖拽耗尽整数空间时调用）。
   Future<void> updateSortOrders(List<int> orderedIds);
 }
