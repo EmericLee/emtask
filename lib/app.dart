@@ -17,12 +17,22 @@ class EmTaskApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final router = ref.watch(appRouterProvider);
     final themeState = ref.watch(themeControllerProvider);
+    // 浅色类预设强制浅色，深色类预设强制深色，中色类跟随全局模式。
+    final preset = themeState.preset;
+    final forcedLight = preset.forceLight;
+    final forcedDark = preset.forceDark;
     return MaterialApp.router(
       title: 'EM Task',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(presetId: themeState.presetId),
-      darkTheme: AppTheme.dark(presetId: themeState.presetId),
-      themeMode: themeState.themeMode,
+      theme: forcedDark
+          ? AppTheme.dark(presetId: themeState.presetId)
+          : AppTheme.light(presetId: themeState.presetId),
+      darkTheme: forcedLight
+          ? AppTheme.light(presetId: themeState.presetId)
+          : AppTheme.dark(presetId: themeState.presetId),
+      themeMode: forcedDark
+          ? ThemeMode.dark
+          : (forcedLight ? ThemeMode.light : themeState.themeMode),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,

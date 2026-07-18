@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
@@ -22,7 +23,7 @@ import 'task_providers.dart';
 final selectedTaskIdProvider = StateProvider<int?>((ref) => null);
 
 /// 宽屏阈值（与 NavigationRail 扩展阈值一致）。
-const _wideScreenThreshold = 1100.0;
+const _wideScreenThreshold = 900.0;
 
 /// PDF 生成所需的数据包（避免两个按钮重复计算）。
 class _PdfData {
@@ -99,7 +100,8 @@ final _calendarNameMapProvider = Provider<Map<String, String>>((ref) {
 final _syncedCalendarListProvider =
     Provider<List<({String url, String name, Color color})>>((ref) {
   final calendars = ref.watch(calendarListProvider).valueOrNull ?? const [];
-  return [
+  final defaultUrl = ref.watch(effectiveDefaultCalendarUrlProvider);
+  final list = [
     for (final c in calendars)
       if (c.syncEnabled)
         (
@@ -108,6 +110,16 @@ final _syncedCalendarListProvider =
           color: _parseCalendarColor(c.color),
         ),
   ];
+  // 默认日历排首位，便于任务页面快速输入栏展示和清单分组顺序
+  if (defaultUrl != null) {
+    list.sort((a, b) {
+      final aDef = a.url == defaultUrl ? 0 : 1;
+      final bDef = b.url == defaultUrl ? 0 : 1;
+      if (aDef != bDef) return aDef - bDef;
+      return a.name.compareTo(b.name);
+    });
+  }
+  return list;
 });
 
 /// 日历 URL 到颜色的映射（响应式，跟随 calendarListProvider 自动更新）。
@@ -123,6 +135,57 @@ final _selectedTagProvider = StateProvider<String?>((ref) => '__all__');
 
 /// 当前选中的清单过滤（null 表示不过滤）。
 final _selectedCalendarProvider = StateProvider<String?>((ref) => null);
+
+/// 默认日历 URL（快速新建任务时使用，可在日历页面切换）。
+///
+/// 使用 NotifierProvider 在内部完成 SharedPreferences 加载和持久化，
+/// 确保任何页面修改默认日历都会立即写入磁盘，应用重启后自动恢复。
+class DefaultCalendarUrlNotifier extends Notifier<String?> {
+  static const _key = 'task_defaultCalendarUrl';
+  bool _loaded = false;
+
+  @override
+  String? build() {
+    if (_loaded) return state;
+    _loaded = true;
+    Future(() async {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_key);
+      if (saved != null && saved != state) {
+        state = saved;
+      }
+    });
+    return null;
+  }
+
+  void set(String? url) {
+    state = url;
+    Future(() async {
+      final prefs = await SharedPreferences.getInstance();
+      if (url != null) {
+        await prefs.setString(_key, url);
+      } else {
+        await prefs.remove(_key);
+      }
+    });
+  }
+}
+
+final defaultCalendarUrlProvider =
+    NotifierProvider<DefaultCalendarUrlNotifier, String?>(
+        DefaultCalendarUrlNotifier.new);
+
+/// 有效的默认日历 URL：用户显式设置的优先，未设置时取第一个已同步日历。
+/// 日历页面和任务页面都基于此 provider 排序，确保默认日历始终排首位。
+final effectiveDefaultCalendarUrlProvider = Provider<String?>((ref) {
+  final explicit = ref.watch(defaultCalendarUrlProvider);
+  if (explicit != null) return explicit;
+  final calendars = ref.watch(calendarListProvider).valueOrNull ?? const [];
+  for (final c in calendars) {
+    if (c.syncEnabled && c.supportsTasks) return c.url;
+  }
+  return null;
+});
 
 /// 当前过滤条件下可用的标签集合（派生自任务列表，自动重算）。
 final _availableTagsProvider = Provider<Set<String>>((ref) {
@@ -156,6 +219,7 @@ class TaskPage extends ConsumerWidget {
     final sortMode = ref.watch(_currentSortModeProvider);
     final selectedTag = ref.watch(_selectedTagProvider);
     final selectedCalendar = ref.watch(_selectedCalendarProvider);
+    final defaultCalendarUrl = ref.watch(effectiveDefaultCalendarUrlProvider);
     final availableTags = ref.watch(_availableTagsProvider);
     final showExtendedAttr = ref.watch(_showExtendedAttrProvider);
     final orphanMode = ref.watch(orphanDisplayModeProvider);
@@ -183,6 +247,8 @@ class TaskPage extends ConsumerWidget {
         }
         final cal = prefs.getString('task_selectedCalendar');
         if (cal != null) ref.read(_selectedCalendarProvider.notifier).state = cal;
+        // 注意：defaultCalendarUrl 的加载与持久化已迁移到 DefaultCalendarUrlNotifier，
+        // 这里不再重复处理，确保日历页面修改也能立即生效。
         final tag = prefs.getString('task_selectedTag');
         if (tag != null) ref.read(_selectedTagProvider.notifier).state = tag;
         final days = prefs.getInt('task_currentViewDays');
@@ -295,7 +361,11 @@ class TaskPage extends ConsumerWidget {
           ? _withAncestors(matchedTasks, allTasks: visibleTasks)
           : matchedTasks;
       final sortedTasks = _applySort(displayTasks, sortMode: sortModeNow);
-      final groups = _groupByCalendar(sortedTasks, calendarNames);
+      final defaultCalendarUrlNow =
+          ref.read(effectiveDefaultCalendarUrlProvider);
+      final groups = _groupByCalendar(sortedTasks, calendarNames,
+          defaultCalendarUrl: defaultCalendarUrlNow,
+          urlByName: calendarNames);
       if (groups.isEmpty) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -386,10 +456,11 @@ class TaskPage extends ConsumerWidget {
       }
     }
 
-    return Scaffold(
-      backgroundColor: Colors.white,
+    // 任务页面主体：使用主题默认配色，不强制白底。
+    // 宽屏下由 _WideScreenLayout 包裹，详情面板从右侧整体滑入时
+    // 连同 AppBar、快速输入栏一起收缩。
+    final taskScaffold = Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.white,
         scrolledUnderElevation: 0,
         title: Row(
           children: [
@@ -474,26 +545,53 @@ class TaskPage extends ConsumerWidget {
           }),
         ],
       ),
-      body: _buildBody(
-        context,
-        ref,
-        tasksAsync: tasksAsync,
-        calendarNames: calendarNames,
-        calendarColors: calendarColors,
-        completedRange: completedRange,
-        viewMode: viewMode,
-        currentViewDays: currentViewDays,
-        sortMode: sortMode,
-        selectedTag: selectedTag,
-        selectedCalendar: selectedCalendar,
-        orphanMode: orphanMode,
-        isWide: isWide,
-        selectedTaskId: selectedTaskId,
+      body: Column(
+        children: [
+          // 快速输入条与下方任务条区域等宽（水平 16 与列表 padding 对齐）
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _QuickAddBar(
+              defaultCalendarUrl: defaultCalendarUrl,
+              syncedCalendars: ref.watch(_syncedCalendarListProvider),
+              viewMode: viewMode,
+            ),
+          ),
+          Expanded(
+            child: _buildBody(
+              context,
+              ref,
+              tasksAsync: tasksAsync,
+              calendarNames: calendarNames,
+              calendarColors: calendarColors,
+              completedRange: completedRange,
+              viewMode: viewMode,
+              currentViewDays: currentViewDays,
+              sortMode: sortMode,
+              selectedTag: selectedTag,
+              selectedCalendar: selectedCalendar,
+              orphanMode: orphanMode,
+              isWide: isWide,
+              defaultCalendarUrl: defaultCalendarUrl,
+            ),
+          ),
+        ],
       ),
+    );
+
+    // 窄屏直接返回任务页；宽屏用 _WideScreenLayout 包裹，
+    // 详情面板从右侧滑入时整个任务页（含 AppBar）一并收缩。
+    if (!isWide) return taskScaffold;
+    return _WideScreenLayout(
+      taskPage: taskScaffold,
+      selectedTaskId: selectedTaskId,
+      onClosePanel: () =>
+          ref.read(selectedTaskIdProvider.notifier).state = null,
     );
   }
 
-  /// 构建主体：宽屏显示主从布局（列表+详情侧栏），窄屏仅列表。
+  /// 构建主体：返回任务列表。
+  /// 宽屏下的详情侧栏由 TaskPage.build 顶层包裹（_WideScreenLayout），
+  /// 以便详情面板滑入时连同 AppBar、快速输入栏一起收缩。
   Widget _buildBody(
     BuildContext context,
     WidgetRef ref, {
@@ -508,7 +606,7 @@ class TaskPage extends ConsumerWidget {
     required String? selectedCalendar,
     required OrphanDisplayMode orphanMode,
     required bool isWide,
-    required int? selectedTaskId,
+    required String? defaultCalendarUrl,
   }) {
     final listWidget = tasksAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -537,7 +635,9 @@ class TaskPage extends ConsumerWidget {
             ? _withAncestors(matchedTasks, allTasks: visibleTasks)
             : matchedTasks;
         final sortedTasks = _applySort(displayTasks, sortMode: sortMode);
-        final groups = _groupByCalendar(sortedTasks, calendarNames);
+        final groups = _groupByCalendar(sortedTasks, calendarNames,
+            defaultCalendarUrl: defaultCalendarUrl,
+            urlByName: calendarNames);
         if (groups.isEmpty) {
           return const _EmptyState(
             icon: Icons.work_outline,
@@ -555,15 +655,7 @@ class TaskPage extends ConsumerWidget {
       },
     );
 
-    if (!isWide) return listWidget;
-
-    // 宽屏：列表 + 可收缩详情侧栏
-    return _WideScreenBody(
-      listWidget: listWidget,
-      selectedTaskId: selectedTaskId,
-      onClosePanel: () =>
-          ref.read(selectedTaskIdProvider.notifier).state = null,
-    );
+    return listWidget;
   }
 
   /// 过滤：移除已删除任务，根据时间范围决定是否显示已完成任务。
@@ -711,14 +803,30 @@ return 0;
   /// 按日历 URL 分组，使用日历显示名称作为分组 key。
   Map<String, List<Task>> _groupByCalendar(
     List<Task> tasks,
-    Map<String, String> calendarNames,
-  ) {
+    Map<String, String> calendarNames, {
+    String? defaultCalendarUrl,
+    Map<String, String>? urlByName,
+  }) {
     final groups = <String, List<Task>>{};
     for (final t in tasks) {
       final name = calendarNames[t.calendarUrl] ?? t.calendarUrl;
       groups.putIfAbsent(name, () => []).add(t);
     }
-    final entries = groups.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    final entries = groups.entries.toList();
+    // 默认日历分组排首位
+    if (defaultCalendarUrl != null && urlByName != null) {
+      final defaultName = urlByName[defaultCalendarUrl];
+      if (defaultName != null) {
+        entries.sort((a, b) {
+          final aDef = a.key == defaultName ? 0 : 1;
+          final bDef = b.key == defaultName ? 0 : 1;
+          if (aDef != bDef) return aDef - bDef;
+          return a.key.compareTo(b.key);
+        });
+        return Map<String, List<Task>>.fromEntries(entries);
+      }
+    }
+    entries.sort((a, b) => a.key.compareTo(b.key));
     return Map<String, List<Task>>.fromEntries(entries);
   }
 }
@@ -1003,7 +1111,7 @@ class _CalendarFilterMenu extends StatelessWidget {
 
     final items = <PopupMenuEntry<String?>>[
       const PopupMenuItem<String?>(
-        value: null,
+        value: '__all__',
         child: Text('全部清单'),
       ),
       if (list.isNotEmpty) const PopupMenuDivider(),
@@ -1028,8 +1136,8 @@ class _CalendarFilterMenu extends StatelessWidget {
 
     return PopupMenuButton<String?>(
       tooltip: '按清单过滤',
-      initialValue: selected,
-      onSelected: onSelected,
+      initialValue: isAll ? '__all__' : selected,
+      onSelected: (v) => onSelected(v == '__all__' ? null : v),
       itemBuilder: (context) => items,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1249,6 +1357,9 @@ class _CurrentTaskList extends ConsumerStatefulWidget {
 class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   final Set<String> _expanded = {};
   final ScrollController _scrollCtrl = ScrollController();
+
+  /// 已折叠的日历分组 key（清单标题点击或展开按钮切换）。
+  final Set<String> _collapsedCalendars = {};
 
   /// 待删除任务：UID → 倒计时定时器。
   /// 点击删除后保留 7 秒撤销窗口，超时后真正执行删除。
@@ -1618,6 +1729,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
             ? widget.calendarColors[firstUrl] ?? Colors.grey
             : Colors.grey;
         final tree = _WorkTaskTree(tasks, allTasks: widget.allTasks);
+        final isCollapsed = _collapsedCalendars.contains(category);
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1635,25 +1747,40 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    category,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
+                  Expanded(
+                    child: Text(
+                      category,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: scheme.onSurface,
+                      ),
                     ),
                   ),
+                  // 右端按钮组：增加任务 + 展开/折叠（辅助样式，不醒目）
                   if (firstUrl != null) ...[
-                    const SizedBox(width: 4),
                     _AddButton(
                       tooltip: '在此清单创建任务',
                       onPressed: () =>
                           _createTaskInCalendar(firstUrl, tree.roots),
                     ),
+                    const SizedBox(width: 4),
                   ],
+                  _CollapseButton(
+                    collapsed: isCollapsed,
+                    onPressed: () {
+                      setState(() {
+                        if (isCollapsed) {
+                          _collapsedCalendars.remove(category);
+                        } else {
+                          _collapsedCalendars.add(category);
+                        }
+                      });
+                    },
+                  ),
                 ],
               ),
             ),
-            _buildGroupBody(category, tree, canReorder),
+            if (!isCollapsed) _buildGroupBody(category, tree, canReorder),
           ],
         );
       },
@@ -2582,6 +2709,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
           onTap: () => _showDetail(context),
           child: Container(
             decoration: BoxDecoration(
+              // 默认背景使用主题表面色，不强制白底，适配深色主题
               color: widget.highlightColor ??
                   (widget.pendingDelete
                       ? scheme.errorContainer.withValues(alpha: 0.3)
@@ -2589,7 +2717,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
                           ? scheme.primaryContainer.withValues(alpha: 0.35)
                           : (_hovering
                               ? scheme.surfaceContainerHighest.withValues(alpha: 0.25)
-                              : Colors.white))),
+                              : scheme.surfaceBright))),
               border: widget.selected
                   ? Border(
                       left: BorderSide(
@@ -2991,6 +3119,172 @@ class _AddButton extends StatelessWidget {
   }
 }
 
+/// 清单标题旁的展开/折叠按钮（辅助样式，不醒目）。
+class _CollapseButton extends StatelessWidget {
+  const _CollapseButton({
+    required this.collapsed,
+    required this.onPressed,
+  });
+
+  final bool collapsed;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: collapsed ? '展开' : '折叠',
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: Icon(
+            collapsed ? Icons.chevron_right : Icons.expand_more,
+            size: 18,
+            color: scheme.outlineVariant,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 顶部快速新建任务输入栏。
+///
+/// 输入标题后回车，直接在默认日历创建任务。
+/// 默认日历可在日历页面切换；若未设置则自动取第一个已同步日历。
+class _QuickAddBar extends ConsumerStatefulWidget {
+  const _QuickAddBar({
+    required this.defaultCalendarUrl,
+    required this.syncedCalendars,
+    required this.viewMode,
+  });
+
+  final String? defaultCalendarUrl;
+  final List<({String url, String name, Color color})> syncedCalendars;
+  final _TaskViewMode viewMode;
+
+  @override
+  ConsumerState<_QuickAddBar> createState() => _QuickAddBarState();
+}
+
+class _QuickAddBarState extends ConsumerState<_QuickAddBar> {
+  final _ctrl = TextEditingController();
+  final _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final title = _ctrl.text.trim();
+    if (title.isEmpty) return;
+
+    // 确定目标日历：优先使用默认日历，未设置时取第一个已同步日历
+    final url = widget.defaultCalendarUrl ??
+        widget.syncedCalendars.firstOrNull?.url;
+    if (url == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在日历页面设置默认日历')),
+      );
+      return;
+    }
+
+    // 计算排序值：取该日历根任务的最小 sortOrder - 1（新建任务排在最前）
+    final allTasks = ref.read(taskListProvider).valueOrNull ?? const [];
+    final rootSiblings = allTasks
+        .where((t) =>
+            t.calendarUrl == url &&
+            (t.parentUid == null || t.parentUid!.isEmpty) &&
+            !t.deleted)
+        .toList();
+    final minSort = rootSiblings.isEmpty
+        ? 0
+        : rootSiblings
+            .map((t) => t.sortOrder ?? 0)
+            .reduce((a, b) => a < b ? a : b);
+    final newSortOrder = minSort - 1;
+
+    // 根据当前视图设置默认属性，确保新任务在当前视图可见
+    final task = Task.create(
+      calendarUrl: url,
+      summary: title,
+    ).copyWith(
+      status: TaskStatus.inProcess,
+      priority: widget.viewMode == _TaskViewMode.important
+          ? TaskPriority.medium
+          : TaskPriority.none,
+      sortOrder: newSortOrder,
+    );
+    final repo = ref.read(taskRepositoryProvider);
+    await repo.create(task);
+    _ctrl.clear();
+    _focus.requestFocus();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final defaultCal = widget.syncedCalendars
+        .where((c) => c.url == widget.defaultCalendarUrl)
+        .firstOrNull;
+    // 默认日历未设置时，显示第一个已同步日历的名称作为提示
+    final calName = defaultCal?.name ??
+        (widget.syncedCalendars.isEmpty ? '无可用日历' : widget.syncedCalendars.first.name);
+    final calColor = defaultCal?.color ??
+        (widget.syncedCalendars.isEmpty ? Colors.grey : widget.syncedCalendars.first.color);
+
+    return Container(
+      // 外层已由 TaskPage 包裹 horizontal:16 的 Padding，此处增加内边距撑高输入条，
+      // 并加水平内边距使内容与任务条内容对齐（任务条内容左缩进 4）。
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+      decoration: BoxDecoration(
+        // 略微区分于内容区，提示这是输入栏
+        color: scheme.primaryContainer.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.add, size: 22, color: scheme.outline),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focus,
+              decoration: InputDecoration(
+                hintText: '快速添加任务到「$calName」…',
+                hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.outline,
+                ),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+              style: theme.textTheme.bodyMedium,
+              onSubmitted: (_) => _submit(),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: calColor,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// 任务栏内联标题编辑器：自动聚焦，失焦或回车时提交。
 class _InlineTitleEditor extends StatefulWidget {
   const _InlineTitleEditor({
@@ -3066,33 +3360,37 @@ class _InlineTitleEditorState extends State<_InlineTitleEditor> {
   }
 }
 
-/// 宽屏主体：列表 + 可收缩详情侧栏。
+/// 宽屏布局：任务页 + 从右侧整体滑入的详情侧栏。
 ///
 /// 侧栏默认隐藏，选中任务后从右侧滑入展开，关闭后向右收缩。
+/// 与 [SizeTransition] 配合 [SlideTransition]：前者让左侧任务页（含 AppBar、
+/// 快速输入栏）平滑收缩让出空间，后者让详情面板内容从右侧滑入。
 /// 切换不同任务时直接替换内容（不重新触发动画）。
-class _WideScreenBody extends StatefulWidget {
-  const _WideScreenBody({
-    required this.listWidget,
+class _WideScreenLayout extends StatefulWidget {
+  const _WideScreenLayout({
+    required this.taskPage,
     required this.selectedTaskId,
     required this.onClosePanel,
   });
 
-  final Widget listWidget;
+  final Widget taskPage;
   final int? selectedTaskId;
   final VoidCallback onClosePanel;
 
   @override
-  State<_WideScreenBody> createState() => _WideScreenBodyState();
+  State<_WideScreenLayout> createState() => _WideScreenLayoutState();
 }
 
-class _WideScreenBodyState extends State<_WideScreenBody>
+class _WideScreenLayoutState extends State<_WideScreenLayout>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
+  late final Animation<Offset> _slide;
+
   /// 当前侧栏中显示的任务 ID（动画期间保持，避免内容在收缩中途消失）。
   int? _displayedTaskId;
 
-  /// 侧栏总宽度（420 内容 + 1 分隔线）。
-  static const _panelWidth = 421.0;
+  /// 侧栏总宽度（收缩约 8 个字符宽度，使详情面板更紧凑）。
+  static const _panelWidth = 349.0;
 
   @override
   void initState() {
@@ -3102,11 +3400,15 @@ class _WideScreenBodyState extends State<_WideScreenBody>
       vsync: this,
       value: widget.selectedTaskId != null ? 1.0 : 0.0,
     );
+    _slide = Tween<Offset>(
+      begin: const Offset(1.0, 0.0),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
     _displayedTaskId = widget.selectedTaskId;
   }
 
   @override
-  void didUpdateWidget(_WideScreenBody oldWidget) {
+  void didUpdateWidget(_WideScreenLayout oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.selectedTaskId != oldWidget.selectedTaskId) {
       if (widget.selectedTaskId != null) {
@@ -3136,24 +3438,27 @@ class _WideScreenBodyState extends State<_WideScreenBody>
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(child: widget.listWidget),
+        Expanded(child: widget.taskPage),
         if (_displayedTaskId != null)
           SizeTransition(
             axis: Axis.horizontal,
             axisAlignment: 1.0,
             sizeFactor: _controller,
-            child: SizedBox(
-              width: _panelWidth,
-              child: Row(
-                children: [
-                  const VerticalDivider(width: 1),
-                  Expanded(
-                    child: TaskDetailPanel(
-                      taskId: _displayedTaskId!,
-                      onClose: widget.onClosePanel,
+            child: SlideTransition(
+              position: _slide,
+              child: SizedBox(
+                width: _panelWidth,
+                child: Row(
+                  children: [
+                    const VerticalDivider(width: 1),
+                    Expanded(
+                      child: TaskDetailPanel(
+                        taskId: _displayedTaskId!,
+                        onClose: widget.onClosePanel,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

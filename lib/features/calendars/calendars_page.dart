@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/providers.dart';
 import '../../domain/entities/calendar.dart';
 import '../sync/sync_providers.dart';
+import '../tasks/task_page.dart';
 import '../tasks/task_providers.dart';
 
 /// 日历管理页：列出已配置日历、刷新远端、开关同步。
@@ -59,6 +60,7 @@ class CalendarsPage extends ConsumerWidget {
               ),
             );
           }
+          // 日历列表保持远端返回的原始顺序，不强制重排
           return ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
             itemCount: list.length,
@@ -87,9 +89,11 @@ class _CalendarTile extends ConsumerWidget {
       loading: () => null,
       error: (_, _) => null,
     );
+    final defaultCalendarUrl = ref.watch(defaultCalendarUrlProvider);
+    final isDefault = defaultCalendarUrl == calendar.url;
 
-    return SwitchListTile(
-      secondary: Container(
+    return ListTile(
+      leading: Container(
         width: 40,
         height: 40,
         decoration: BoxDecoration(
@@ -102,60 +106,72 @@ class _CalendarTile extends ConsumerWidget {
           size: 20,
         ),
       ),
-      title: Row(
+      title: Text(
+        calendar.displayName,
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            if (taskCount != null)
+              _MetaChip(label: '$taskCount 任务'),
+            if (calendar.supportsTasks)
+              const _MetaChip(label: 'VTODO'),
+            if (calendar.supportsEvents)
+              const _MetaChip(label: 'VEVENT'),
+          ],
+        ),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: Text(
-              calendar.displayName,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
+          // 设为默认按钮：仅支持任务且已启用同步的清单可设为默认
+          if (calendar.supportsTasks && calendar.syncEnabled)
+            TextButton(
+              onPressed: isDefault
+                  ? null
+                  : () {
+                      // 通过 Notifier.set 持久化保存，确保应用重启后仍生效
+                      ref
+                          .read(defaultCalendarUrlProvider.notifier)
+                          .set(calendar.url);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('已将「${calendar.displayName}」设为默认日历'),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    },
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                foregroundColor: isDefault ? scheme.outline : scheme.primary,
+              ),
+              child: Text(
+                isDefault ? '默认' : '设为默认',
+                style: const TextStyle(fontSize: 12),
               ),
             ),
-          ),
-          if (taskCount != null)
-            _MetaChip(label: '$taskCount 个任务'),
-        ],
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const SizedBox(height: 4),
-          Text(
-            calendar.url,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.outline,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            children: [
-              _MetaChip(
-                label: calendar.syncEnabled ? '同步开启' : '同步关闭',
-                foregroundColor: calendar.syncEnabled
-                    ? scheme.primary
-                    : scheme.outline,
-                backgroundColor: calendar.syncEnabled
-                    ? scheme.primaryContainer
-                    : scheme.surfaceContainerHighest,
-              ),
-              if (calendar.supportsTasks)
-                const _MetaChip(label: '任务'),
-              if (calendar.supportsEvents)
-                const _MetaChip(label: '事件'),
-              if (calendar.ctag != null)
-                _MetaChip(label: 'CTag: ${calendar.ctag}'),
-            ],
+          Switch(
+            value: calendar.syncEnabled,
+            onChanged: (v) async {
+              final repo = ref.read(calendarRepositoryProvider);
+              await repo.setSyncEnabled(calendar.url, v);
+              // 关闭同步时，若该清单是当前默认日历，自动清除默认设置，
+              // 避免新建任务落到未同步的清单上
+              if (!v && isDefault) {
+                ref.read(defaultCalendarUrlProvider.notifier).set(null);
+              }
+            },
           ),
         ],
       ),
-      value: calendar.syncEnabled,
-      onChanged: (v) async {
-        final repo = ref.read(calendarRepositoryProvider);
-        await repo.setSyncEnabled(calendar.url, v);
-      },
     );
   }
 
@@ -188,15 +204,9 @@ class _CalendarTile extends ConsumerWidget {
 
 /// 日历信息小标签。
 class _MetaChip extends StatelessWidget {
-  const _MetaChip({
-    required this.label,
-    this.foregroundColor,
-    this.backgroundColor,
-  });
+  const _MetaChip({required this.label});
 
   final String label;
-  final Color? foregroundColor;
-  final Color? backgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -204,14 +214,14 @@ class _MetaChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
-        color: backgroundColor ?? scheme.surfaceContainerHighest,
+        color: scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         label,
         style: TextStyle(
           fontSize: 11,
-          color: foregroundColor ?? scheme.outline,
+          color: scheme.outline,
         ),
       ),
     );

@@ -63,45 +63,91 @@ class _ThemeSelector extends StatelessWidget {
     final controller = ref.read(themeControllerProvider.notifier);
     final theme = Theme.of(context);
 
+    final preset = themeState.preset;
+    final forcedBrightness = preset.brightness; // null / light / dark
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 明暗模式
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-          child: Row(
-            children: [
-              Text('模式', style: theme.textTheme.labelLarge),
-              const SizedBox(width: 12),
-              Expanded(
-                child: SegmentedButton<ThemeMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: ThemeMode.system,
-                      icon: Icon(Icons.brightness_auto, size: 18),
-                      label: Text('跟随系统'),
+        // 明暗模式：浅色/深色类预设强制固定亮度，隐藏切换器并提示；中色类跟随全局模式
+        if (forcedBrightness != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Row(
+              children: [
+                Text('模式', style: theme.textTheme.labelLarge),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.4),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    ButtonSegment(
-                      value: ThemeMode.light,
-                      icon: Icon(Icons.light_mode, size: 18),
-                      label: Text('浅色'),
+                    child: Row(
+                      children: [
+                        Icon(
+                          preset.forceDark ? Icons.dark_mode : Icons.light_mode,
+                          size: 18,
+                          color: theme.colorScheme.outline,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            preset.forceDark
+                                ? '当前为深色风格配色，固定深色模式'
+                                : '当前为浅色风格配色，固定浅色模式',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.outline,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    ButtonSegment(
-                      value: ThemeMode.dark,
-                      icon: Icon(Icons.dark_mode, size: 18),
-                      label: Text('深色'),
-                    ),
-                  ],
-                  selected: {themeState.themeMode},
-                  onSelectionChanged: (s) => controller.setThemeMode(s.first),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Row(
+              children: [
+                Text('模式', style: theme.textTheme.labelLarge),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: ThemeMode.system,
+                        icon: Icon(Icons.brightness_auto, size: 18),
+                        label: Text('跟随系统'),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.light,
+                        icon: Icon(Icons.light_mode, size: 18),
+                        label: Text('浅色'),
+                      ),
+                      ButtonSegment(
+                        value: ThemeMode.dark,
+                        icon: Icon(Icons.dark_mode, size: 18),
+                        label: Text('深色'),
+                      ),
+                    ],
+                    selected: {themeState.themeMode},
+                    onSelectionChanged: (s) => controller.setThemeMode(s.first),
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
         const SizedBox(height: 12),
         Text('配色', style: theme.textTheme.labelLarge),
         const SizedBox(height: 8),
+        // 所有配色合在一起展示（浅色/中色/深色三类按列表顺序排列）
         Wrap(
           spacing: 12,
           runSpacing: 12,
@@ -178,7 +224,8 @@ class _OrphanModeSelector extends StatelessWidget {
   }
 }
 
-/// 单个配色色块。
+/// 单个配色色块：展示该种子色生成的真实色板（primary、primaryContainer、
+/// secondary、tertiary），让不同配色的区别直观可见，而非仅显示种子色圆点。
 class _ColorChip extends StatelessWidget {
   const _ColorChip({
     required this.preset,
@@ -192,51 +239,78 @@ class _ColorChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    // 预览亮度：浅色类强制 light，深色类强制 dark，中色类跟随当前主题。
+    // 中色类通过 AppTheme.schemeFor 生成中灰调背景，预览与实际应用效果一致。
+    final brightness =
+        preset.brightness ?? Theme.of(context).brightness;
+    final scheme = AppTheme.schemeFor(preset, brightness);
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(12),
       child: Tooltip(
         message: preset.name,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: preset.seedColor,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: selected
-                      ? theme.colorScheme.onSurface
-                      : Colors.transparent,
-                  width: 3,
+        child: Container(
+          width: 72,
+          padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 主色圆球（primary）
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  shape: BoxShape.circle,
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: preset.seedColor.withValues(alpha: 0.4),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
+                child: selected
+                    ? const Icon(Icons.check, color: Colors.white, size: 20)
+                    : null,
+              ),
+              const SizedBox(height: 8),
+              // 色板条：primaryContainer / secondary / tertiary
+              // 这三色在不同种子色之间差异明显，便于区分
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  _swatch(scheme.primaryContainer),
+                  const SizedBox(width: 4),
+                  _swatch(scheme.secondary),
+                  const SizedBox(width: 4),
+                  _swatch(scheme.tertiary),
                 ],
               ),
-              child: selected
-                  ? const Icon(Icons.check, color: Colors.white, size: 22)
-                  : null,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              preset.name,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: selected
-                    ? theme.colorScheme.onSurface
-                    : theme.colorScheme.outline,
-                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              const SizedBox(height: 6),
+              Text(
+                preset.name,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: scheme.onSurface,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _swatch(Color c) {
+    return Container(
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(
+        color: c,
+        shape: BoxShape.circle,
       ),
     );
   }

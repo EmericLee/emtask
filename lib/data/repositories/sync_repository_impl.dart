@@ -221,6 +221,26 @@ class SyncRepositoryImpl implements SyncRepository {
           continue;
         }
 
+        // ctag 预检：远端 ctag 与本地相同则跳过 sync-collection，减少不必要的请求
+        // ctag 是 calendarserver 扩展，当日历内容变化时即改变，可作为低成本的变更检测
+        String? remoteCtag;
+        try {
+          final info = await _client.getCalendarProperties(cal.url);
+          remoteCtag = info?.ctag;
+        } catch (e) {
+          AppLogger.instance
+              .d(_tag, '获取 ctag 失败 [${cal.displayName}]，跳过预检: $e');
+        }
+        if (remoteCtag != null &&
+            cal.ctag != null &&
+            remoteCtag == cal.ctag) {
+          AppLogger.instance
+              .d(_tag, 'ctag 未变化，跳过 [${cal.displayName}]');
+          updated++;
+          incrementalCount++;
+          continue;
+        }
+
         try {
           final result = await _client.syncCollection(
             calendarHref: cal.url,
@@ -240,7 +260,10 @@ class SyncRepositoryImpl implements SyncRepository {
             deleted++;
           }
 
+          // sync-collection 成功后同时更新 ctag 和 syncToken，
+          // 下次 pull 即可依赖 ctag 预检跳过无变更的日历
           await _calendars.update(cal.copyWith(
+            ctag: remoteCtag,
             syncToken: result.syncToken,
           ));
           updated++;

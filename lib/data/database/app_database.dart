@@ -131,10 +131,14 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// 响应式监听待同步任务数（dirty 或 deleted 的任务总数）。
+  ///
+  /// 注意：softDeleteTask 会同时设置 dirty=true 和 deleted=true，
+  /// 因此 dirtyQ 必须排除 deleted=true 的任务，避免被删除的任务在
+  /// dirtyQ 和 deletedQ 中重复计数。
   Stream<int> watchDirtyTaskCount() {
     final dirtyQ = selectOnly(tasks)
       ..addColumns([tasks.id.count()])
-      ..where(tasks.dirty.equals(true));
+      ..where(tasks.dirty.equals(true) & tasks.deleted.equals(false));
     final deletedQ = selectOnly(tasks)
       ..addColumns([tasks.id.count()])
       ..where(tasks.deleted.equals(true));

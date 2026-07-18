@@ -111,45 +111,61 @@ class _AppScaffoldState extends State<_AppScaffold>
   @override
   Widget build(BuildContext context) {
     final index = _selectedIndex(widget.location);
-    final theme = Theme.of(context);
 
     return Scaffold(
       body: Row(
         children: [
+          // 收缩显示：仅图标，不显示标题，悬浮 Tooltip 提供说明
           NavigationRail(
             selectedIndex: index,
             onDestinationSelected: (i) => context.go(_pathForIndex(i)),
-            extended: MediaQuery.of(context).size.width > 1100,
-            minWidth: 36,
-            minExtendedWidth: 140,
-            selectedLabelTextStyle: theme.textTheme.bodyLarge?.copyWith(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface,
-            ),
-            unselectedLabelTextStyle: theme.textTheme.bodyLarge?.copyWith(
-              fontSize: 16,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            extended: false,
+            minWidth: 56,
+            minExtendedWidth: 56,
+            labelType: NavigationRailLabelType.none,
             destinations: const [
               NavigationRailDestination(
-                icon: Icon(Icons.checklist_outlined),
-                selectedIcon: Icon(Icons.checklist),
+                icon: Tooltip(
+                  message: '任务',
+                  child: Icon(Icons.checklist_outlined),
+                ),
+                selectedIcon: Tooltip(
+                  message: '任务',
+                  child: Icon(Icons.checklist),
+                ),
                 label: Text('任务'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.calendar_month_outlined),
-                selectedIcon: Icon(Icons.calendar_month),
+                icon: Tooltip(
+                  message: '日历',
+                  child: Icon(Icons.calendar_month_outlined),
+                ),
+                selectedIcon: Tooltip(
+                  message: '日历',
+                  child: Icon(Icons.calendar_month),
+                ),
                 label: Text('日历'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.sync_outlined),
-                selectedIcon: Icon(Icons.sync),
+                icon: Tooltip(
+                  message: '同步',
+                  child: Icon(Icons.sync_outlined),
+                ),
+                selectedIcon: Tooltip(
+                  message: '同步',
+                  child: Icon(Icons.sync),
+                ),
                 label: Text('同步'),
               ),
               NavigationRailDestination(
-                icon: Icon(Icons.settings_outlined),
-                selectedIcon: Icon(Icons.settings),
+                icon: Tooltip(
+                  message: '设置',
+                  child: Icon(Icons.settings_outlined),
+                ),
+                selectedIcon: Tooltip(
+                  message: '设置',
+                  child: Icon(Icons.settings),
+                ),
                 label: Text('设置'),
               ),
             ],

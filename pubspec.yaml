@@ -1,7 +1,7 @@
 name: em_task
 description: "EM Task - 跨平台任务管理器，支持 CalDAV / Nextcloud Tasks 同步。"
 publish_to: 'none'
-version: 0.0.19+19
+version: 0.0.20+20
 
 environment:
   # sdk: ^3.11.0
@@ -45,6 +45,9 @@ dependencies:
 
   # 桌面窗口控制
   window_manager: ^0.4.2
+
+  # 下拉选择控件（可定制行高/样式，替代 DropdownMenu/DropdownButton）
+  dropdown_button2: ^3.1.0
 
   # PDF 输出（纯 Dart 生成，不依赖 pdfium，跨平台兼容 UOS ARM64）
   pdf: ^3.11.0

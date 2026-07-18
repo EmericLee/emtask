@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:dropdown_button2/dropdown_button2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -158,11 +159,13 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
         content: Text('确定要删除「${t.summary}」吗？'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('删除')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
         ],
       ),
     );
@@ -175,13 +178,17 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
   @override
   Widget build(BuildContext context) {
     final calendarsAsync = ref.watch(calendarListProvider);
+    // 详情页整体向浅色偏移（surfaceBright），与任务列表背景形成层次区分
+    final scheme = Theme.of(context).colorScheme;
     // 监听任务列表变化，外部修改后同步刷新（如任务条内联编辑标题）
     ref.listen(taskListProvider, (prev, next) {
       if (_isNew || _loaded == null) return;
       next.whenData((_) => _refreshFromExternal());
     });
     return Scaffold(
+      backgroundColor: scheme.surfaceBright,
       appBar: AppBar(
+        backgroundColor: scheme.surfaceBright,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
@@ -218,8 +225,10 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_loadError!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          child: Text(
+            _loadError!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
         ),
       );
     }
@@ -249,11 +258,7 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
 /// 与 [TaskDetailPage] 功能一致，但以关闭按钮替代返回按钮，
 /// 删除任务后通过 [onClose] 回调通知父组件清除选中状态。
 class TaskDetailPanel extends ConsumerStatefulWidget {
-  const TaskDetailPanel({
-    super.key,
-    required this.taskId,
-    this.onClose,
-  });
+  const TaskDetailPanel({super.key, required this.taskId, this.onClose});
 
   final int taskId;
   final VoidCallback? onClose;
@@ -369,11 +374,13 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
         content: Text('确定要删除「${t.summary}」吗？'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('删除')),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
         ],
       ),
     );
@@ -386,13 +393,17 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   @override
   Widget build(BuildContext context) {
     final calendarsAsync = ref.watch(calendarListProvider);
+    // 详情页整体向浅色偏移（surfaceBright），与左侧任务列表背景形成层次区分
+    final scheme = Theme.of(context).colorScheme;
     // 监听任务列表变化，外部修改后同步刷新（如任务条内联编辑标题）
     ref.listen(taskListProvider, (prev, next) {
       if (_loaded == null) return;
       next.whenData((_) => _refreshFromExternal());
     });
     return Scaffold(
+      backgroundColor: scheme.surfaceBright,
       appBar: AppBar(
+        backgroundColor: scheme.surfaceBright,
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: widget.onClose,
@@ -400,6 +411,30 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
         ),
         title: const Text('任务详情'),
         actions: [
+          // 同步状态红点标志：dirty 时红色，已同步时灰色，点击查看详细同步信息
+          if (_loaded != null)
+            Tooltip(
+              message: _loaded!.dirty ? '待同步' : '已同步',
+              child: InkWell(
+                onTap: () => _showSyncInfo(context),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Center(
+                    child: Container(
+                      width: 10,
+                      height: 10,
+                      decoration: BoxDecoration(
+                        color: _loaded!.dirty
+                            ? Theme.of(context).colorScheme.error
+                            : Theme.of(context).colorScheme.outline,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             onPressed: _delete,
@@ -411,6 +446,17 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     );
   }
 
+  /// 弹出同步信息面板（BottomSheet），展示 UID/HREF/ETag/时间戳等调试信息。
+  void _showSyncInfo(BuildContext context) {
+    final t = _loaded;
+    if (t == null) return;
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => _SyncInfoSheet(task: t),
+    );
+  }
+
   Widget _buildBody(AsyncValue<List<Calendar>> calendarsAsync) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
@@ -419,8 +465,10 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_loadError!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          child: Text(
+            _loadError!,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
         ),
       );
     }
@@ -527,11 +575,9 @@ class _DetailListState extends State<_DetailList> {
     final percent = s == TaskStatus.completed
         ? 100
         : (s == TaskStatus.needsAction ? 0 : t.percent);
-    await widget.onUpdate((x) => x.copyWith(
-          status: s,
-          completed: completed,
-          percent: percent,
-        ));
+    await widget.onUpdate(
+      (x) => x.copyWith(status: s, completed: completed, percent: percent),
+    );
   }
 
   Future<void> _setPriority(TaskPriority p) async {
@@ -551,11 +597,9 @@ class _DetailListState extends State<_DetailList> {
       status = TaskStatus.needsAction;
       completed = null;
     }
-    await widget.onUpdate((t) => t.copyWith(
-          percent: p,
-          status: status,
-          completed: completed,
-        ));
+    await widget.onUpdate(
+      (t) => t.copyWith(percent: p, status: status, completed: completed),
+    );
   }
 
   @override
@@ -567,11 +611,10 @@ class _DetailListState extends State<_DetailList> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
       children: [
-        // 标题（就地 TextField，自动换行，回车保存，禁止换行输入）
+        // 标题（全宽，无标签，点击就地编辑）
         if (_editingTitle)
           Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: TextField(
               controller: _titleCtrl,
               focusNode: _titleFocus,
@@ -581,8 +624,11 @@ class _DetailListState extends State<_DetailList> {
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _commitTitle(),
               inputFormatters: [FilteringTextInputFormatter.deny('\n')],
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
               decoration: InputDecoration(
-                labelText: '标题',
+                hintText: '标题',
                 border: const OutlineInputBorder(),
                 suffixIcon: IconButton(
                   icon: const Icon(Icons.check, size: 18),
@@ -592,91 +638,31 @@ class _DetailListState extends State<_DetailList> {
             ),
           )
         else
-          _EditTile(
-            icon: Icons.title,
-            label: '标题',
-            value: task.summary,
-            maxLines: null,
-            style: theme.textTheme.titleMedium?.copyWith(
-              decoration: task.isCompleted ? TextDecoration.lineThrough : null,
-              color: task.isCompleted ? scheme.outline : null,
-              fontWeight: FontWeight.w600,
-            ),
-            trailing: const Icon(Icons.edit_outlined, size: 18),
+          InkWell(
             onTap: () {
               _titleCtrl.text = task.summary;
               setState(() => _editingTitle = true);
             },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Text(
+                task.summary,
+                maxLines: null,
+                style: theme.textTheme.titleMedium?.copyWith(
+                  decoration: task.isCompleted
+                      ? TextDecoration.lineThrough
+                      : null,
+                  color: task.isCompleted ? scheme.outline : null,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
           ),
         const _Divider(),
-        // 描述：点击内联展开多行编辑
+        // 描述（全宽，无标签，点击内联展开多行编辑）
         _DescriptionField(
           description: task.description,
           onChanged: (v) => widget.onUpdate((t) => t.copyWith(description: v)),
-        ),
-        const _Divider(),
-        // 时间信息：开始 / 截止 / 完成
-        _DateTimeField(
-          icon: Icons.play_arrow_outlined,
-          label: '开始时间',
-          value: task.start,
-          onSaved: (v) => widget.onUpdate((t) => t.copyWith(start: v)),
-        ),
-        _DateTimeField(
-          icon: Icons.event_outlined,
-          label: '截止时间',
-          value: task.due,
-          valueColor: task.isOverdue ? scheme.error : null,
-          onSaved: (v) => widget.onUpdate((t) => t.copyWith(due: v)),
-        ),
-        _DateTimeField(
-          icon: Icons.check_circle_outline,
-          label: '完成时间',
-          value: task.completed,
-          valueColor: scheme.outline,
-          onSaved: (v) => widget.onUpdate((t) => t.copyWith(completed: v)),
-        ),
-        const _Divider(),
-        // 状态：下拉选择控件
-        _DropdownField<TaskStatus>(
-          icon: _statusIcon(task.status),
-          iconColor: _statusColor(task.status, scheme),
-          label: '状态',
-          value: task.status,
-          onChanged: _setStatus,
-          options: TaskStatus.values
-              .map((s) => _DropdownOption(
-                    value: s,
-                    label: _statusLabel(s),
-                    icon: _statusIcon(s),
-                    color: _statusColor(s, scheme),
-                  ))
-              .toList(),
-        ),
-        // 进度：内联 Slider（点击展开）
-        _PercentEditor(
-          task: task,
-          onUpdate: _setPercent,
-        ),
-        // 优先级：下拉选择控件
-        _DropdownField<TaskPriority>(
-          icon: task.priority == TaskPriority.high
-              ? Icons.star
-              : Icons.star_border,
-          iconColor: _priorityColor(task.priority),
-          label: '优先级',
-          value: task.priority,
-          onChanged: _setPriority,
-          options: [TaskPriority.none, TaskPriority.high, TaskPriority.low]
-              .map((p) => _DropdownOption(
-                    value: p,
-                    label: _priorityLabel(p),
-                    icon: p == TaskPriority.high
-                        ? Icons.star
-                        : Icons.star_border,
-                    color: _priorityColor(p),
-                  ))
-              .toList(),
         ),
         const _Divider(),
         // 标签：内联 InputChip 编辑
@@ -687,7 +673,73 @@ class _DetailListState extends State<_DetailList> {
               widget.onUpdate((t) => t.copyWith(categories: list)),
         ),
         const _Divider(),
-        // 所属日历：下拉选择可切换日历
+        // 优先级：下拉选择控件
+        _DropdownField<TaskPriority>(
+          icon: task.priority == TaskPriority.high
+              ? Icons.star
+              : Icons.star_border,
+          iconColor: _priorityColor(task.priority),
+          label: '优先级',
+          value: task.priority,
+          valueColor: scheme.outline,
+          onChanged: _setPriority,
+          options: [TaskPriority.none, TaskPriority.high, TaskPriority.low]
+              .map(
+                (p) => _DropdownOption(
+                  value: p,
+                  label: _priorityLabel(p),
+                  icon: p == TaskPriority.high ? Icons.star : Icons.star_border,
+                  color: _priorityColor(p),
+                ),
+              )
+              .toList(),
+        ),
+        // 状态：下拉选择控件
+        _DropdownField<TaskStatus>(
+          icon: _statusIcon(task.status),
+          iconColor: _statusColor(task.status, scheme),
+          label: '状态',
+          value: task.status,
+          valueColor: scheme.outline,
+          onChanged: _setStatus,
+          options: TaskStatus.values
+              .map(
+                (s) => _DropdownOption(
+                  value: s,
+                  label: _statusLabel(s),
+                  icon: _statusIcon(s),
+                  color: _statusColor(s, scheme),
+                ),
+              )
+              .toList(),
+        ),
+        const _Divider(),
+        // 时间信息：开始 / 截止 / 完成
+        _DateTimeField(
+          icon: Icons.play_arrow_outlined,
+          label: '开始时间',
+          value: task.start,
+          valueColor: scheme.outline,
+          onSaved: (v) => widget.onUpdate((t) => t.copyWith(start: v)),
+        ),
+        _DateTimeField(
+          icon: Icons.event_outlined,
+          label: '截止时间',
+          value: task.due,
+          valueColor: task.isOverdue ? scheme.error : scheme.outline,
+          onSaved: (v) => widget.onUpdate((t) => t.copyWith(due: v)),
+        ),
+        _DateTimeField(
+          icon: Icons.check_circle_outline,
+          label: '完成时间',
+          value: task.completed,
+          valueColor: scheme.outline,
+          onSaved: (v) => widget.onUpdate((t) => t.copyWith(completed: v)),
+        ),
+        const _Divider(),
+        // 完成度：内联 Slider（点击展开）
+        _PercentEditor(task: task, onUpdate: _setPercent),
+        // 所属清单：下拉选择可切换日历
         widget.calendarsAsync.when(
           data: (list) {
             final current = list.firstWhere(
@@ -712,12 +764,14 @@ class _DetailListState extends State<_DetailList> {
                   widget.onUpdate((t) => t.copyWith(calendarUrl: url)),
               options: list
                   .where((c) => c.supportsTasks)
-                  .map((c) => _DropdownOption(
-                        value: c.url,
-                        label: c.displayName,
-                        icon: Icons.calendar_today_outlined,
-                        color: _parseCalendarColor(c.color),
-                      ))
+                  .map(
+                    (c) => _DropdownOption(
+                      value: c.url,
+                      label: c.displayName,
+                      icon: Icons.calendar_today_outlined,
+                      color: _parseCalendarColor(c.color),
+                    ),
+                  )
                   .toList(),
             );
           },
@@ -731,20 +785,6 @@ class _DetailListState extends State<_DetailList> {
             value: task.calendarUrl,
           ),
         ),
-        // 父任务
-        if (task.parentUid != null && task.parentUid!.isNotEmpty) ...[
-          const _Divider(),
-          _EditTile(
-            icon: Icons.subdirectory_arrow_right,
-            label: '父任务',
-            value: task.parentUid!,
-            valueColor: scheme.outline,
-            mono: true,
-          ),
-        ],
-        const _Divider(),
-        // 同步信息（折叠区）
-        _SyncInfoTile(task: task),
       ],
     );
   }
@@ -752,39 +792,39 @@ class _DetailListState extends State<_DetailList> {
   // ---------- 辅助方法 ----------
 
   static String _statusLabel(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => '需要操作',
-        TaskStatus.inProcess => '进行中',
-        TaskStatus.completed => '已完成',
-        TaskStatus.cancelled => '已取消',
-      };
+    TaskStatus.needsAction => '需要操作',
+    TaskStatus.inProcess => '进行中',
+    TaskStatus.completed => '已完成',
+    TaskStatus.cancelled => '已取消',
+  };
 
   static String _priorityLabel(TaskPriority p) => switch (p) {
-        TaskPriority.none => '无',
-        TaskPriority.high => '高',
-        TaskPriority.medium => '中',
-        TaskPriority.low => '低',
-      };
+    TaskPriority.none => '无',
+    TaskPriority.high => '高',
+    TaskPriority.medium => '中',
+    TaskPriority.low => '低',
+  };
 
   static IconData _statusIcon(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => Icons.radio_button_unchecked,
-        TaskStatus.inProcess => Icons.pending_actions,
-        TaskStatus.completed => Icons.check_circle,
-        TaskStatus.cancelled => Icons.cancel_outlined,
-      };
+    TaskStatus.needsAction => Icons.radio_button_unchecked,
+    TaskStatus.inProcess => Icons.pending_actions,
+    TaskStatus.completed => Icons.check_circle,
+    TaskStatus.cancelled => Icons.cancel_outlined,
+  };
 
   static Color _statusColor(TaskStatus s, ColorScheme scheme) => switch (s) {
-        TaskStatus.needsAction => scheme.outline,
-        TaskStatus.inProcess => scheme.secondary,
-        TaskStatus.completed => scheme.primary,
-        TaskStatus.cancelled => scheme.outline,
-      };
+    TaskStatus.needsAction => scheme.outline,
+    TaskStatus.inProcess => scheme.secondary,
+    TaskStatus.completed => scheme.primary,
+    TaskStatus.cancelled => scheme.outline,
+  };
 
   static Color _priorityColor(TaskPriority p) => switch (p) {
-        TaskPriority.none => Colors.grey,
-        TaskPriority.high => Colors.red,
-        TaskPriority.medium => Colors.blue,
-        TaskPriority.low => Colors.blue,
-      };
+    TaskPriority.none => Colors.grey,
+    TaskPriority.high => Colors.red,
+    TaskPriority.medium => Colors.blue,
+    TaskPriority.low => Colors.blue,
+  };
 }
 
 /// 日期时间字段：点击就地弹出紧凑选择面板（含清除按钮）。
@@ -834,9 +874,12 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
           const SizedBox(width: 8),
           SizedBox(
             width: 64,
-            child: Text(widget.label,
-                style: theme.textTheme.labelMedium
-                    ?.copyWith(color: scheme.outline)),
+            child: Text(
+              widget.label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.outline,
+              ),
+            ),
           ),
           const SizedBox(width: 6),
           ConstrainedBox(
@@ -861,12 +904,18 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
                     if (widget.value != null)
                       GestureDetector(
                         onTap: () => widget.onSaved(null),
-                        child: Icon(Icons.clear,
-                            size: 16, color: scheme.outline),
+                        child: Icon(
+                          Icons.clear,
+                          size: 16,
+                          color: scheme.outline,
+                        ),
                       )
                     else
-                      Icon(Icons.chevron_right,
-                          size: 18, color: scheme.outline),
+                      Icon(
+                        Icons.chevron_right,
+                        size: 18,
+                        color: scheme.outline,
+                      ),
                   ],
                 ),
               ),
@@ -893,8 +942,10 @@ class _DateTimeFieldState extends ConsumerState<_DateTimeField> {
     final showBelow =
         topLeft.dy + size.height + panelHeight + 16 < media.size.height;
     final top = showBelow
-        ? math.min(topLeft.dy + size.height + 4,
-            media.size.height - panelHeight - 8)
+        ? math.min(
+            topLeft.dy + size.height + 4,
+            media.size.height - panelHeight - 8,
+          )
         : math.max(8.0, topLeft.dy - panelHeight - 4);
     final left = (topLeft.dx)
         .clamp(8.0, math.max(8.0, media.size.width - panelWidth - 8))
@@ -958,7 +1009,11 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
   @override
   void initState() {
     super.initState();
-    _date = DateTime(widget.initial.year, widget.initial.month, widget.initial.day);
+    _date = DateTime(
+      widget.initial.year,
+      widget.initial.month,
+      widget.initial.day,
+    );
     _hour = widget.initial.hour;
     _minute = widget.initial.minute;
     _displayedMonth = DateTime(_date.year, _date.month);
@@ -998,12 +1053,17 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
                       if (widget.showTime)
                         Padding(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 2, vertical: 2),
+                            horizontal: 2,
+                            vertical: 2,
+                          ),
                           child: Row(
                             children: [
-                              Text('时间',
-                                  style: theme.textTheme.labelSmall
-                                      ?.copyWith(color: scheme.outline)),
+                              Text(
+                                '时间',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.outline,
+                                ),
+                              ),
                               const SizedBox(width: 6),
                               _TimeSpinner(
                                 value: _hour,
@@ -1025,29 +1085,43 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
                       // 按钮行：清除 / 取消 / 确定（仅时间模式显示确定）
                       Padding(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 2, vertical: 2),
+                          horizontal: 2,
+                          vertical: 2,
+                        ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             TextButton(
-                                  onPressed: widget.onClear,
-                                  child: const Text('清除',
-                                      style: TextStyle(fontSize: 13))),
+                              onPressed: widget.onClear,
+                              child: const Text(
+                                '清除',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ),
                             TextButton(
-                                onPressed: widget.onCancel,
-                                child: const Text('取消',
-                                    style: TextStyle(fontSize: 13))),
+                              onPressed: widget.onCancel,
+                              child: const Text(
+                                '取消',
+                                style: TextStyle(fontSize: 13),
+                              ),
+                            ),
                             if (widget.showTime) ...[
                               const SizedBox(width: 4),
                               FilledButton(
                                 onPressed: () => widget.onConfirm(
-                                  DateTime(_date.year, _date.month, _date.day,
-                                          _hour, _minute)
-                                      .toUtc(),
+                                  DateTime(
+                                    _date.year,
+                                    _date.month,
+                                    _date.day,
+                                    _hour,
+                                    _minute,
+                                  ).toUtc(),
                                 ),
                                 style: FilledButton.styleFrom(
                                   padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
+                                    horizontal: 12,
+                                    vertical: 6,
+                                  ),
                                   textStyle: const TextStyle(fontSize: 13),
                                 ),
                                 child: const Text('确定'),
@@ -1075,9 +1149,15 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
     final today = DateTime(now.year, now.month, now.day);
     final monthFmt = DateFormat('yyyy年M月');
 
-    final firstOfMonth = DateTime(_displayedMonth.year, _displayedMonth.month, 1);
+    final firstOfMonth = DateTime(
+      _displayedMonth.year,
+      _displayedMonth.month,
+      1,
+    );
     // 周一为首列：weekday 1=周一 … 7=周日
-    final gridStart = firstOfMonth.subtract(Duration(days: firstOfMonth.weekday - 1));
+    final gridStart = firstOfMonth.subtract(
+      Duration(days: firstOfMonth.weekday - 1),
+    );
     const weekdayLabels = ['一', '二', '三', '四', '五', '六', '日'];
 
     return Column(
@@ -1092,18 +1172,26 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
               IconButton(
                 icon: const Icon(Icons.chevron_left, size: 18),
                 onPressed: () => setState(() {
-                  _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month - 1);
+                  _displayedMonth = DateTime(
+                    _displayedMonth.year,
+                    _displayedMonth.month - 1,
+                  );
                 }),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               ),
-              Text(monthFmt.format(_displayedMonth),
-                  style: theme.textTheme.titleSmall),
+              Text(
+                monthFmt.format(_displayedMonth),
+                style: theme.textTheme.titleSmall,
+              ),
               IconButton(
                 icon: const Icon(Icons.chevron_right, size: 18),
                 onPressed: () => setState(() {
-                  _displayedMonth = DateTime(_displayedMonth.year, _displayedMonth.month + 1);
+                  _displayedMonth = DateTime(
+                    _displayedMonth.year,
+                    _displayedMonth.month + 1,
+                  );
                 }),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
@@ -1120,9 +1208,12 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
               for (final w in weekdayLabels)
                 Expanded(
                   child: Center(
-                    child: Text(w,
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: scheme.outline)),
+                    child: Text(
+                      w,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.outline,
+                      ),
+                    ),
                   ),
                 ),
             ],
@@ -1164,7 +1255,8 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
   ) {
     final isCurrentMonth = cellDate.month == _displayedMonth.month;
     final isToday = cellDate == today;
-    final isSelected = cellDate.year == _date.year &&
+    final isSelected =
+        cellDate.year == _date.year &&
         cellDate.month == _date.month &&
         cellDate.day == _date.day;
 
@@ -1185,9 +1277,13 @@ class _DateTimePopoverState extends State<_DateTimePopover> {
         // 日期模式（无时间选择器）：点击即确认并关闭
         if (!widget.showTime) {
           widget.onConfirm(
-            DateTime(cellDate.year, cellDate.month, cellDate.day,
-                    _hour, _minute)
-                .toUtc(),
+            DateTime(
+              cellDate.year,
+              cellDate.month,
+              cellDate.day,
+              _hour,
+              _minute,
+            ).toUtc(),
           );
           return;
         }
@@ -1263,10 +1359,8 @@ class _TimeSpinner extends StatelessWidget {
             ),
           ),
           InkWell(
-            onTap: () =>
-                onChanged((value - 1 + maxValue + 1) % (maxValue + 1)),
-            child:
-                Icon(Icons.arrow_drop_down, size: 14, color: scheme.outline),
+            onTap: () => onChanged((value - 1 + maxValue + 1) % (maxValue + 1)),
+            child: Icon(Icons.arrow_drop_down, size: 14, color: scheme.outline),
           ),
         ],
       ),
@@ -1303,9 +1397,12 @@ class _PercentEditorState extends State<_PercentEditor> {
           const SizedBox(width: 8),
           SizedBox(
             width: 64,
-            child: Text('完成进度',
-                style: theme.textTheme.labelMedium
-                    ?.copyWith(color: scheme.outline)),
+            child: Text(
+              '完成进度',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.outline,
+              ),
+            ),
           ),
           const SizedBox(width: 6),
           ConstrainedBox(
@@ -1328,9 +1425,12 @@ class _PercentEditorState extends State<_PercentEditor> {
                         ),
                       ),
                       SizedBox(
-                          width: 36,
-                          child: Text('$display%',
-                              style: theme.textTheme.labelSmall)),
+                        width: 36,
+                        child: Text(
+                          '$display%',
+                          style: theme.textTheme.labelSmall,
+                        ),
+                      ),
                     ],
                   )
                 : GestureDetector(
@@ -1360,14 +1460,16 @@ class _PercentEditorState extends State<_PercentEditor> {
                               ),
                             ),
                           ),
-                          Text(display > 0 ? '$display%' : '未开始',
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                color: display == 0
-                                    ? scheme.outline
-                                    : (display > 50
+                          Text(
+                            display > 0 ? '$display%' : '未开始',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: display == 0
+                                  ? scheme.outline
+                                  : (display > 50
                                         ? scheme.onPrimary
                                         : scheme.onSurface),
-                              )),
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -1442,63 +1544,43 @@ class _DescriptionFieldState extends State<_DescriptionField> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     if (_editing) {
+      // 编辑态：全宽多行输入框，内嵌对号确定按钮（与标题字段一致）
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.notes, size: 16, color: scheme.outline),
-            const SizedBox(width: 8),
-            SizedBox(
-                width: 64,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text('描述',
-                      style: theme.textTheme.labelMedium
-                          ?.copyWith(color: scheme.outline)),
-                )),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _ctrl,
-                    focusNode: _focus,
-                    maxLines: 8,
-                    minLines: 2,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                          onPressed: () => setState(() => _editing = false),
-                          child: const Text('取消')),
-                      FilledButton(
-                          onPressed: _commit, child: const Text('保存')),
-                    ],
-                  ),
-                ],
-              ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: TextField(
+          controller: _ctrl,
+          focusNode: _focus,
+          maxLines: 8,
+          minLines: 2,
+          textAlignVertical: TextAlignVertical.top,
+          decoration: InputDecoration(
+            hintText: '描述',
+            border: const OutlineInputBorder(),
+            isDense: true,
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.check, size: 18),
+              onPressed: _commit,
+              tooltip: '保存',
             ),
-          ],
+          ),
         ),
       );
     }
+    // 非编辑态：全宽展示描述内容（或占位文本），点击进入编辑
     final empty = widget.description.trim().isEmpty;
-    return _EditTile(
-      icon: Icons.notes,
-      label: '描述',
-      value: empty ? '点击添加描述' : widget.description,
-      valueColor: empty ? scheme.outline : scheme.onSurface,
-      maxLines: 8,
-      minLines: 2,
-      trailing: const Icon(Icons.edit_outlined, size: 18),
+    return InkWell(
       onTap: _startEdit,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Text(
+          empty ? '点击添加描述' : widget.description,
+          maxLines: 8,
+          overflow: TextOverflow.ellipsis,
+          style: empty
+              ? theme.textTheme.bodyMedium?.copyWith(color: scheme.outline)
+              : theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurface),
+        ),
+      ),
     );
   }
 }
@@ -1550,111 +1632,135 @@ class _TagEditorState extends State<_TagEditor> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    // 全宽布局（无图标、无标签前缀），标签胶囊与输入框在同一 Wrap 流式布局中
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Icon(Icons.label_outline, size: 16, color: scheme.outline),
-          const SizedBox(width: 8),
+          // 标签胶囊：样式与任务条上的 _TagChip 一致，带删除按钮
+          ...widget.tags.map(
+            (tag) =>
+                _EditableTagChip(label: tag, onDeleted: () => _removeTag(tag)),
+          ),
+          // 输入框：与标签同行，支持检索已知标签或输入新标签
           SizedBox(
-              width: 64,
-              child: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text('标签',
-                    style: theme.textTheme.labelMedium
-                        ?.copyWith(color: scheme.outline)),
-              )),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (widget.tags.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: widget.tags
-                          .map((tag) => InputChip(
-                                label: Text(tag),
-                                onDeleted: () => _removeTag(tag),
-                                deleteIconColor: scheme.outline,
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                                visualDensity: VisualDensity.compact,
-                              ))
-                          .toList(),
+            width: 140,
+            child: RawAutocomplete<String>(
+              textEditingController: _ctrl,
+              focusNode: _focus,
+              optionsBuilder: (textEditingValue) {
+                final v = textEditingValue.text.trim().toLowerCase();
+                // 空输入时显示全部已知标签（排除已添加的）
+                final base = widget.allTags.where(
+                  (t) => !widget.tags.contains(t),
+                );
+                if (v.isEmpty) return base.take(10);
+                return base.where((t) => t.toLowerCase().contains(v)).take(10);
+              },
+              onSelected: _addTag,
+              fieldViewBuilder: (ctx, controller, focusNode, onFieldSubmitted) {
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  style: theme.textTheme.bodyMedium,
+                  decoration: InputDecoration(
+                    hintText: '输入或选择标签',
+                    hintStyle: theme.textTheme.bodyMedium?.copyWith(
+                      color: scheme.outline,
+                    ),
+                    isDense: true,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
                     ),
                   ),
-                RawAutocomplete<String>(
-                  textEditingController: _ctrl,
-                  focusNode: _focus,
-                  optionsBuilder: (textEditingValue) {
-                    final v = textEditingValue.text.trim().toLowerCase();
-                    // 空输入时显示全部已知标签（排除已添加的）
-                    final base = widget.allTags
-                        .where((t) => !widget.tags.contains(t));
-                    if (v.isEmpty) return base.take(10);
-                    return base
-                        .where((t) => t.toLowerCase().contains(v))
-                        .take(10);
+                  onSubmitted: (v) {
+                    _addTag(v);
+                    onFieldSubmitted();
                   },
-                  onSelected: _addTag,
-                  fieldViewBuilder:
-                      (ctx, controller, focusNode, onFieldSubmitted) {
-                    return TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      decoration: InputDecoration(
-                        hintText: '输入或选择标签',
-                        isDense: true,
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: UnderlineInputBorder(
-                          borderSide:
-                              BorderSide(color: scheme.outlineVariant),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 8),
+                );
+              },
+              optionsViewBuilder: (ctx, onSelected, options) {
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 8,
+                    borderRadius: BorderRadius.circular(8),
+                    color: scheme.surface,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 240),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: options.length,
+                        itemBuilder: (_, i) {
+                          final opt = options.elementAt(i);
+                          return ListTile(
+                            dense: true,
+                            title: Text(opt),
+                            onTap: () => onSelected(opt),
+                          );
+                        },
                       ),
-                      onSubmitted: (v) {
-                        _addTag(v);
-                        onFieldSubmitted();
-                      },
-                    );
-                  },
-                  optionsViewBuilder: (ctx, onSelected, options) {
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Material(
-                        elevation: 8,
-                        borderRadius: BorderRadius.circular(8),
-                        color: scheme.surface,
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxHeight: 240),
-                          child: ListView.builder(
-                            shrinkWrap: true,
-                            itemCount: options.length,
-                            itemBuilder: (_, i) {
-                              final opt = options.elementAt(i);
-                              return ListTile(
-                                dense: true,
-                                title: Text(opt),
-                                onTap: () => onSelected(opt),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ],
+                    ),
+                  ),
+                );
+              },
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 可删除的标签胶囊（视觉样式同任务条上的 _TagChip，带 × 删除按钮）。
+class _EditableTagChip extends StatelessWidget {
+  const _EditableTagChip({required this.label, required this.onDeleted});
+
+  final String label;
+  final VoidCallback onDeleted;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    // 整个胶囊均可点击删除，光标变为手型
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onDeleted,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: scheme.secondaryContainer.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSecondaryContainer,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.close,
+                size: 12,
+                color: scheme.onSecondaryContainer.withValues(alpha: 0.7),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1679,9 +1785,9 @@ class _DropdownOption<T> {
 
 /// 下拉选择字段：当前值显示在带边框的"选择框"中，点击展开菜单。
 ///
-/// 视觉参照 web `<select>` 控件，使用 Material 3 的 [DropdownMenu] 实现，
-/// 自带边框、下拉箭头、hover/focus 高亮。
-class _DropdownField<T> extends StatelessWidget {
+/// 视觉参照 web `<select>` 控件，使用 [DropdownButton2] 实现，
+/// 行高、padding、选中态对号均可直接控制。
+class _DropdownField<T> extends StatefulWidget {
   const _DropdownField({
     required this.icon,
     required this.label,
@@ -1689,6 +1795,7 @@ class _DropdownField<T> extends StatelessWidget {
     required this.options,
     required this.onChanged,
     this.iconColor,
+    this.valueColor,
   });
 
   final IconData icon;
@@ -1697,61 +1804,139 @@ class _DropdownField<T> extends StatelessWidget {
   final List<_DropdownOption<T>> options;
   final ValueChanged<T> onChanged;
   final Color? iconColor;
+  final Color? valueColor;
+
+  @override
+  State<_DropdownField<T>> createState() => _DropdownFieldState<T>();
+}
+
+class _DropdownFieldState<T> extends State<_DropdownField<T>> {
+  late final ValueNotifier<T?> _notifier;
+
+  @override
+  void initState() {
+    super.initState();
+    _notifier = ValueNotifier<T?>(widget.value);
+  }
+
+  @override
+  void didUpdateWidget(covariant _DropdownField<T> oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      _notifier.value = widget.value;
+    }
+  }
+
+  @override
+  void dispose() {
+    _notifier.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final value = widget.value;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Icon(icon, size: 16, color: iconColor ?? scheme.outline),
+          Icon(widget.icon, size: 16, color: widget.iconColor ?? scheme.outline),
           const SizedBox(width: 8),
           SizedBox(
             width: 64,
             child: Text(
-              label,
-              style: theme.textTheme.labelMedium
-                  ?.copyWith(color: scheme.outline),
+              widget.label,
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: scheme.outline,
+              ),
             ),
           ),
           const SizedBox(width: 6),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 160),
-            child: Theme(
-              data: theme.copyWith(
-                inputDecorationTheme: const InputDecorationTheme(
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 4),
+            child: DropdownButton2<T>(
+              valueListenable: _notifier,
+              items: widget.options
+                  .map(
+                    (o) => DropdownItem<T>(
+                      value: o.value,
+                      height: 32,
+                      child: Row(
+                        children: [
+                          if (o.icon != null) ...[
+                            Icon(
+                              o.icon,
+                              size: 14,
+                              color: o.color ?? scheme.outline,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          Text(
+                            o.label,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                          const Spacer(),
+                          if (o.value == value)
+                            Icon(
+                              Icons.check,
+                              size: 14,
+                              color: scheme.primary,
+                            ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
+              selectedItemBuilder: (_) => widget.options
+                  .map(
+                    (o) => Row(
+                      children: [
+                        if (o.icon != null) ...[
+                          Icon(
+                            o.icon,
+                            size: 14,
+                            color: o.color ?? scheme.outline,
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Text(
+                          o.label,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: widget.valueColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) widget.onChanged(v);
+              },
+              underline: const SizedBox.shrink(),
+              buttonStyleData: const ButtonStyleData(
+                height: 28,
+                padding: EdgeInsets.symmetric(horizontal: 8),
+              ),
+              iconStyleData: IconStyleData(
+                icon: Icon(
+                  Icons.arrow_drop_down,
+                  size: 18,
+                  color: scheme.outline,
                 ),
               ),
-              child: DropdownMenu<T>(
-                initialSelection: value,
-                expandedInsets: EdgeInsets.zero,
-                enableSearch: false,
-                requestFocusOnTap: false,
-                onSelected: (v) {
-                  if (v != null) onChanged(v);
-                },
-                dropdownMenuEntries: options
-                    .map((o) => DropdownMenuEntry<T>(
-                          value: o.value,
-                          label: o.label,
-                          leadingIcon: o.icon != null
-                              ? Icon(o.icon,
-                                  size: 18, color: o.color ?? scheme.outline)
-                              : null,
-                          trailingIcon: o.value == value
-                              ? Icon(Icons.check,
-                                  size: 16, color: scheme.primary)
-                              : null,
-                        ))
-                    .toList(),
+              dropdownStyleData: DropdownStyleData(
+                maxHeight: 240,
+                width: 160,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  color: scheme.surface,
+                ),
+              ),
+              menuItemStyleData: const MenuItemStyleData(
+                padding: EdgeInsets.symmetric(horizontal: 10),
               ),
             ),
           ),
@@ -1772,12 +1957,7 @@ class _EditTile extends StatelessWidget {
     required this.value,
     this.onTap,
     this.iconColor,
-    this.valueColor,
     this.trailing,
-    this.style,
-    this.maxLines = 1,
-    this.minLines,
-    this.mono = false,
   });
 
   final IconData icon;
@@ -1785,68 +1965,41 @@ class _EditTile extends StatelessWidget {
   final String value;
   final VoidCallback? onTap;
   final Color? iconColor;
-  final Color? valueColor;
   final Widget? trailing;
-  final TextStyle? style;
-  final int? maxLines;
-  final int? minLines;
-  final bool mono;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final effectiveStyle = style ?? theme.textTheme.bodyMedium;
-    // 计算最小高度：minLines × 行高（fontSize × height）
-    final fontSize = effectiveStyle?.fontSize ?? 14.0;
-    final lineHeight = effectiveStyle?.height ?? 1.43;
-    final minHeight = (minLines ?? 1) * fontSize * lineHeight;
-    final multiLine = minLines != null && minLines! > 1;
-
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
-          crossAxisAlignment: multiLine
-              ? CrossAxisAlignment.start
-              : CrossAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Icon(icon, size: 16, color: iconColor ?? scheme.outline),
             const SizedBox(width: 8),
             SizedBox(
               width: 64,
-              child: Padding(
-                padding: EdgeInsets.only(top: multiLine ? 2 : 0),
-                child: Text(
-                  label,
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: scheme.outline,
-                  ),
+              child: Text(
+                label,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.outline,
                 ),
               ),
             ),
             const SizedBox(width: 6),
             Expanded(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minHeight: minHeight),
-                child: Text(
-                  value,
-                  maxLines: maxLines,
-                  overflow: TextOverflow.ellipsis,
-                  style: effectiveStyle?.copyWith(
-                    color: valueColor,
-                    fontFamily: mono ? 'monospace' : null,
-                  ),
-                ),
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium,
               ),
             ),
-            if (trailing != null)
-              Padding(
-                padding: EdgeInsets.only(top: multiLine ? 2 : 0),
-                child: trailing,
-              ),
+            if (trailing != null) trailing!,
           ],
         ),
       ),
@@ -1866,83 +2019,74 @@ Color? _parseCalendarColor(String? hex) {
   }
 }
 
-/// 同步信息折叠区。
-class _SyncInfoTile extends StatefulWidget {
-  const _SyncInfoTile({required this.task});
+/// 同步信息面板（用于 BottomSheet 弹出），展示任务的同步元信息。
+class _SyncInfoSheet extends StatelessWidget {
+  const _SyncInfoSheet({required this.task});
 
   final Task task;
-
-  @override
-  State<_SyncInfoTile> createState() => _SyncInfoTileState();
-}
-
-class _SyncInfoTileState extends State<_SyncInfoTile> {
-  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final t = widget.task;
+    final t = task;
     final fmt = DateFormat('yyyy-MM-dd HH:mm:ss');
-    return Column(
-      children: [
-        InkWell(
-          onTap: () => setState(() => _expanded = !_expanded),
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                Icon(Icons.sync_outlined, size: 16, color: scheme.outline),
-                const SizedBox(width: 8),
-                const SizedBox(width: 64, child: Text('同步信息')),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    t.dirty ? '待同步' : '已同步',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: t.dirty ? scheme.error : scheme.outline,
-                    ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.sync_outlined, size: 20, color: scheme.outline),
+              const SizedBox(width: 8),
+              Text(
+                '同步信息',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: t.dirty
+                      ? scheme.errorContainer.withValues(alpha: 0.5)
+                      : scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  t.dirty ? '待同步' : '已同步',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: t.dirty ? scheme.error : scheme.outline,
                   ),
                 ),
-                Icon(
-                  _expanded
-                      ? Icons.keyboard_arrow_up
-                      : Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: scheme.outline,
-                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                _kv('UID', t.uid, scheme),
+                if (t.href != null) _kv('HREF', t.href!, scheme),
+                if (t.etag != null) _kv('ETag', t.etag!, scheme),
+                if (t.created != null)
+                  _kv('创建时间', fmt.format(t.created!.toLocal()), scheme),
+                if (t.lastModified != null)
+                  _kv('最后修改', fmt.format(t.lastModified!.toLocal()), scheme),
+                _kv('待同步', t.dirty ? '是' : '否', scheme),
               ],
             ),
           ),
-        ),
-        if (_expanded)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-            child: Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                children: [
-                  _kv('UID', t.uid, scheme),
-                  if (t.href != null) _kv('HREF', t.href!, scheme),
-                  if (t.etag != null) _kv('ETag', t.etag!, scheme),
-                  if (t.created != null)
-                    _kv('创建时间', fmt.format(t.created!.toLocal()), scheme),
-                  if (t.lastModified != null)
-                    _kv('最后修改', fmt.format(t.lastModified!.toLocal()),
-                        scheme),
-                  _kv('待同步', t.dirty ? '是' : '否', scheme),
-                ],
-              ),
-            ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1954,14 +2098,16 @@ class _SyncInfoTileState extends State<_SyncInfoTile> {
         children: [
           SizedBox(
             width: 80,
-            child: Text(k,
-                style: TextStyle(
-                    color: scheme.outline, fontSize: 12)),
+            child: Text(
+              k,
+              style: TextStyle(color: scheme.outline, fontSize: 12),
+            ),
           ),
           Expanded(
-            child: SelectableText(v,
-                style: const TextStyle(
-                    fontSize: 12, fontFamily: 'monospace')),
+            child: SelectableText(
+              v,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
           ),
         ],
       ),
@@ -2013,11 +2159,13 @@ class _NewTaskFormState extends State<_NewTaskForm> {
   final _percent = 0;
   String? _calendarUrl;
   bool _saving = false;
+  late final ValueNotifier<String?> _calNotifier;
 
   @override
   void initState() {
     super.initState();
     _calendarUrl = widget.initialCalendarUrl;
+    _calNotifier = ValueNotifier<String?>(_calendarUrl);
   }
 
   @override
@@ -2025,20 +2173,21 @@ class _NewTaskFormState extends State<_NewTaskForm> {
     _summaryCtrl.dispose();
     _descCtrl.dispose();
     _categoryCtrl.dispose();
+    _calNotifier.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     if (_summaryCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入任务标题')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请输入任务标题')));
       return;
     }
     if (_calendarUrl == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先在设置中配置 CalDAV 账户')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请先在设置中配置 CalDAV 账户')));
       return;
     }
     setState(() => _saving = true);
@@ -2079,8 +2228,7 @@ class _NewTaskFormState extends State<_NewTaskForm> {
     );
     if (time == null) return;
     onPicked(
-      DateTime(date.year, date.month, date.day, time.hour, time.minute)
-          .toUtc(),
+      DateTime(date.year, date.month, date.day, time.hour, time.minute).toUtc(),
     );
   }
 
@@ -2095,24 +2243,74 @@ class _NewTaskFormState extends State<_NewTaskForm> {
         // 日历选择
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: DropdownButtonFormField<String?>(
-            value: _calendarUrl,
-            decoration: const InputDecoration(
-              labelText: '所属清单',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-            items: widget.calendarsAsync.when(
-              data: (list) => list
-                  .map((c) => DropdownMenuItem<String?>(
+          child: widget.calendarsAsync.when(
+            data: (list) {
+              return DropdownButton2<String?>(
+                valueListenable: _calNotifier,
+                items: list
+                    .map(
+                      (c) => DropdownItem<String?>(
                         value: c.url,
-                        child: Text(c.displayName),
-                      ))
-                  .toList(),
-              loading: () => const [],
-              error: (_, _) => const [],
+                        height: 36,
+                        child: Row(
+                          children: [
+                            Text(
+                              c.displayName,
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                            const Spacer(),
+                            if (c.url == _calendarUrl)
+                              Icon(
+                                Icons.check,
+                                size: 14,
+                                color: scheme.primary,
+                              ),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
+                selectedItemBuilder: (_) => list
+                    .map(
+                      (c) => Text(
+                        c.displayName,
+                        style: theme.textTheme.bodyMedium,
+                      ),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() {
+                  _calendarUrl = v;
+                  _calNotifier.value = v;
+                }),
+                underline: const SizedBox.shrink(),
+                buttonStyleData: const ButtonStyleData(
+                  height: 40,
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                ),
+                iconStyleData: IconStyleData(
+                  icon: Icon(
+                    Icons.arrow_drop_down,
+                    size: 20,
+                    color: scheme.outline,
+                  ),
+                ),
+                dropdownStyleData: DropdownStyleData(
+                  maxHeight: 240,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: scheme.surface,
+                  ),
+                ),
+                menuItemStyleData: const MenuItemStyleData(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                ),
+              );
+            },
+            loading: () => const SizedBox(
+              height: 40,
+              child: Center(child: LinearProgressIndicator()),
             ),
-            onChanged: (v) => setState(() => _calendarUrl = v),
+            error: (_, _) => const SizedBox.shrink(),
           ),
         ),
         const SizedBox(height: 8),
@@ -2150,13 +2348,17 @@ class _NewTaskFormState extends State<_NewTaskForm> {
                 children: TaskStatus.values.map((s) {
                   return SimpleDialogOption(
                     onPressed: () => Navigator.pop(ctx, s),
-                    child: Row(children: [
-                      Icon(_statusIcon(s),
-                          color: _statusColor(s, Theme.of(ctx).colorScheme)),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(_statusLabel(s))),
-                      if (s == _status) const Icon(Icons.check, size: 18),
-                    ]),
+                    child: Row(
+                      children: [
+                        Icon(
+                          _statusIcon(s),
+                          color: _statusColor(s, Theme.of(ctx).colorScheme),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: Text(_statusLabel(s))),
+                        if (s == _status) const Icon(Icons.check, size: 18),
+                      ],
+                    ),
                   );
                 }).toList(),
               ),
@@ -2165,9 +2367,7 @@ class _NewTaskFormState extends State<_NewTaskForm> {
           },
         ),
         _EditTile(
-          icon: _priority == TaskPriority.high
-              ? Icons.star
-              : Icons.star_border,
+          icon: _priority == TaskPriority.high ? Icons.star : Icons.star_border,
           iconColor: _priorityColor(_priority),
           label: '优先级',
           value: _priorityLabel(_priority),
@@ -2177,22 +2377,30 @@ class _NewTaskFormState extends State<_NewTaskForm> {
               context: context,
               builder: (ctx) => SimpleDialog(
                 title: const Text('选择优先级'),
-                children: [TaskPriority.none, TaskPriority.high, TaskPriority.low].map((p) {
-                  return SimpleDialogOption(
-                    onPressed: () => Navigator.pop(ctx, p),
-                    child: Row(children: [
-                      Icon(
-                        p == TaskPriority.high
-                            ? Icons.star
-                            : Icons.star_border,
-                        color: _priorityColor(p),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(child: Text(_priorityLabel(p))),
-                      if (p == _priority) const Icon(Icons.check, size: 18),
-                    ]),
-                  );
-                }).toList(),
+                children:
+                    [
+                      TaskPriority.none,
+                      TaskPriority.high,
+                      TaskPriority.low,
+                    ].map((p) {
+                      return SimpleDialogOption(
+                        onPressed: () => Navigator.pop(ctx, p),
+                        child: Row(
+                          children: [
+                            Icon(
+                              p == TaskPriority.high
+                                  ? Icons.star
+                                  : Icons.star_border,
+                              color: _priorityColor(p),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(child: Text(_priorityLabel(p))),
+                            if (p == _priority)
+                              const Icon(Icons.check, size: 18),
+                          ],
+                        ),
+                      );
+                    }).toList(),
               ),
             );
             if (p != null) setState(() => _priority = p);
@@ -2240,39 +2448,37 @@ class _NewTaskFormState extends State<_NewTaskForm> {
   // ---------- 辅助 ----------
 
   static String _statusLabel(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => '需要操作',
-        TaskStatus.inProcess => '进行中',
-        TaskStatus.completed => '已完成',
-        TaskStatus.cancelled => '已取消',
-      };
+    TaskStatus.needsAction => '需要操作',
+    TaskStatus.inProcess => '进行中',
+    TaskStatus.completed => '已完成',
+    TaskStatus.cancelled => '已取消',
+  };
 
   static String _priorityLabel(TaskPriority p) => switch (p) {
-        TaskPriority.none => '无',
-        TaskPriority.high => '高',
-        TaskPriority.medium => '中',
-        TaskPriority.low => '低',
-      };
+    TaskPriority.none => '无',
+    TaskPriority.high => '高',
+    TaskPriority.medium => '中',
+    TaskPriority.low => '低',
+  };
 
   static IconData _statusIcon(TaskStatus s) => switch (s) {
-        TaskStatus.needsAction => Icons.radio_button_unchecked,
-        TaskStatus.inProcess => Icons.pending_actions,
-        TaskStatus.completed => Icons.check_circle,
-        TaskStatus.cancelled => Icons.cancel_outlined,
-      };
+    TaskStatus.needsAction => Icons.radio_button_unchecked,
+    TaskStatus.inProcess => Icons.pending_actions,
+    TaskStatus.completed => Icons.check_circle,
+    TaskStatus.cancelled => Icons.cancel_outlined,
+  };
 
   static Color _statusColor(TaskStatus s, ColorScheme scheme) => switch (s) {
-        TaskStatus.needsAction => scheme.outline,
-        TaskStatus.inProcess => scheme.secondary,
-        TaskStatus.completed => scheme.primary,
-        TaskStatus.cancelled => scheme.outline,
-      };
+    TaskStatus.needsAction => scheme.outline,
+    TaskStatus.inProcess => scheme.secondary,
+    TaskStatus.completed => scheme.primary,
+    TaskStatus.cancelled => scheme.outline,
+  };
 
   static Color _priorityColor(TaskPriority p) => switch (p) {
-        TaskPriority.none => Colors.grey,
-        TaskPriority.high => Colors.red,
-        TaskPriority.medium => Colors.blue,
-        TaskPriority.low => Colors.blue,
-      };
+    TaskPriority.none => Colors.grey,
+    TaskPriority.high => Colors.red,
+    TaskPriority.medium => Colors.blue,
+    TaskPriority.low => Colors.blue,
+  };
 }
-
-
