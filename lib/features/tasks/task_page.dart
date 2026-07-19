@@ -41,40 +41,10 @@ class _PdfData {
 }
 
 /// 已完成任务的显示范围（默认不显示）。
-enum _CompletedRange {
-  off, // 不显示已完成
-  day1, // 1 天
-  day3, // 3 天
-  day7, // 7 天
-  month1, // 1 月
-  year1, // 1 年
-  currentYear, // 当年
-}
-
-final _completedRangeProvider =
-    StateProvider<_CompletedRange>((ref) => _CompletedRange.off);
+/// 定义在 task_providers.dart 中作为公共 CompletedRange。
 
 /// 任务页面专用排序方式（默认手动排序，同步 Nextcloud sortOrder）。
 final _currentSortModeProvider = StateProvider<SortMode>((ref) => SortMode.manual);
-
-/// 任务视图模式：当前（关注）/ 全部 / 完成。
-enum _TaskViewMode {
-  /// 重要：设置了优先级的、或截止日期在当前及之前的所有任务
-  important,
-  /// 当前：截止日期在配置天数内、或设了优先级、或进行中的任务
-  current,
-  /// 全部：所有任务（根据开关决定是否显示已完成）
-  all,
-  /// 完成：包含所有任务（含已完成）
-  completed,
-}
-
-/// 任务页视图模式。
-final _taskViewModeProvider =
-    StateProvider<_TaskViewMode>((ref) => _TaskViewMode.current);
-
-/// "当前"视图的时间范围（天）：截止日期在未来多少天内的任务会被纳入。
-final _currentViewDaysProvider = StateProvider<int>((ref) => 7);
 
 /// 是否显示任务条扩展属性行（创建/修改/完成时间等）。
 final _showExtendedAttrProvider = StateProvider<bool>((ref) => false);
@@ -188,18 +158,60 @@ final effectiveDefaultCalendarUrlProvider = Provider<String?>((ref) {
 });
 
 /// 当前过滤条件下可用的标签集合（派生自任务列表，自动重算）。
+///
+/// 过滤逻辑与任务树完全一致：应用视图模式过滤（重要/当前/全部/完成）
+/// + 完成范围过滤 + 清单过滤。只有任务树中可见的任务才参与标签汇总。
 final _availableTagsProvider = Provider<Set<String>>((ref) {
   final tasksAsync = ref.watch(taskListProvider);
-  final completedRange = ref.watch(_completedRangeProvider);
+  final completedRange = ref.watch(completedRangeProvider);
+  final viewMode = ref.watch(taskViewModeProvider);
+  final currentViewDays = ref.watch(currentViewDaysProvider);
+  final selectedCalendar = ref.watch(_selectedCalendarProvider);
   final tasks = tasksAsync.valueOrNull ?? const <Task>[];
+  // 应用与任务树相同的过滤逻辑
+  var visibleTasks = filterByViewMode(
+    tasks,
+    completedRange: completedRange,
+    viewMode: viewMode,
+    currentViewDays: currentViewDays,
+  );
+  if (selectedCalendar != null) {
+    visibleTasks = visibleTasks
+        .where((t) => t.calendarUrl == selectedCalendar)
+        .toList();
+  }
   final tags = <String>{};
-  for (final t in tasks) {
-    if (t.deleted) continue;
-    if (completedRange == _CompletedRange.off && t.isCompleted) continue;
+  for (final t in visibleTasks) {
     tags.addAll(t.categories);
   }
   return tags;
 });
+
+/// 各清单的可见任务数量（用于清单过滤菜单显示计数）。
+///
+/// 过滤逻辑与任务树一致（视图模式 + 完成范围），不含清单过滤。
+final _calendarVisibleCountProvider = Provider<Map<String, int>>((ref) {
+  final tasksAsync = ref.watch(taskListProvider);
+  final completedRange = ref.watch(completedRangeProvider);
+  final viewMode = ref.watch(taskViewModeProvider);
+  final currentViewDays = ref.watch(currentViewDaysProvider);
+  final tasks = tasksAsync.valueOrNull ?? const <Task>[];
+  // 应用与任务树相同的过滤逻辑（不含清单过滤）
+  final visibleTasks = filterByViewMode(
+    tasks,
+    completedRange: completedRange,
+    viewMode: viewMode,
+    currentViewDays: currentViewDays,
+  );
+  final counts = <String, int>{};
+  for (final t in visibleTasks) {
+    counts[t.calendarUrl] = (counts[t.calendarUrl] ?? 0) + 1;
+  }
+  return counts;
+});
+
+/// 基础过滤、视图模式过滤、父任务链追溯等函数已提升为公共，
+/// 定义在 task_providers.dart 中（filterByCompletedRange / filterByViewMode / withAncestors）。
 
 /// 任务列表页，按日历分组展示。
 ///
@@ -213,9 +225,9 @@ class TaskPage extends ConsumerWidget {
     final tasksAsync = ref.watch(taskListProvider);
     final calendarNames = ref.watch(_calendarNameMapProvider);
     final calendarColors = ref.watch(_calendarColorMapProvider);
-    final completedRange = ref.watch(_completedRangeProvider);
-    final viewMode = ref.watch(_taskViewModeProvider);
-    final currentViewDays = ref.watch(_currentViewDaysProvider);
+    final completedRange = ref.watch(completedRangeProvider);
+    final viewMode = ref.watch(taskViewModeProvider);
+    final currentViewDays = ref.watch(currentViewDaysProvider);
     final sortMode = ref.watch(_currentSortModeProvider);
     final selectedTag = ref.watch(_selectedTagProvider);
     final selectedCalendar = ref.watch(_selectedCalendarProvider);
@@ -236,9 +248,9 @@ class TaskPage extends ConsumerWidget {
       _taskPageSettingsLoaded = true;
       SchedulerBinding.instance.addPostFrameCallback((_) {
         final vmIdx = prefs.getInt('task_viewMode');
-        if (vmIdx != null && vmIdx < _TaskViewMode.values.length) {
-          ref.read(_taskViewModeProvider.notifier).state =
-              _TaskViewMode.values[vmIdx];
+        if (vmIdx != null && vmIdx < TaskViewMode.values.length) {
+          ref.read(taskViewModeProvider.notifier).state =
+              TaskViewMode.values[vmIdx];
         }
         final smIdx = prefs.getInt('task_sortMode');
         if (smIdx != null && smIdx < SortMode.values.length) {
@@ -252,11 +264,11 @@ class TaskPage extends ConsumerWidget {
         final tag = prefs.getString('task_selectedTag');
         if (tag != null) ref.read(_selectedTagProvider.notifier).state = tag;
         final days = prefs.getInt('task_currentViewDays');
-        if (days != null) ref.read(_currentViewDaysProvider.notifier).state = days;
-        final crIdx = prefs.getInt('task_completedRange');
-        if (crIdx != null && crIdx < _CompletedRange.values.length) {
-          ref.read(_completedRangeProvider.notifier).state =
-              _CompletedRange.values[crIdx];
+        if (days != null) ref.read(currentViewDaysProvider.notifier).state = days;
+        final crIdx = prefs.getInt('taskCompletedRange');
+        if (crIdx != null && crIdx < CompletedRange.values.length) {
+          ref.read(completedRangeProvider.notifier).state =
+              CompletedRange.values[crIdx];
         }
         final showAttr = prefs.getBool('task_showExtendedAttr');
         if (showAttr != null) {
@@ -266,7 +278,7 @@ class TaskPage extends ConsumerWidget {
     }
 
     // 自动保存监听（始终注册，prefs 为 null 时跳过）
-    ref.listen(_taskViewModeProvider,
+    ref.listen(taskViewModeProvider,
         (_, v) => prefs?.setInt('task_viewMode', v.index));
     ref.listen(_currentSortModeProvider,
         (_, v) => prefs?.setInt('task_sortMode', v.index));
@@ -284,10 +296,10 @@ class TaskPage extends ConsumerWidget {
         prefs?.remove('task_selectedTag');
       }
     });
-    ref.listen(_currentViewDaysProvider,
+    ref.listen(currentViewDaysProvider,
         (_, v) => prefs?.setInt('task_currentViewDays', v));
-    ref.listen(_completedRangeProvider,
-        (_, v) => prefs?.setInt('task_completedRange', v.index));
+    ref.listen(completedRangeProvider,
+        (_, v) => prefs?.setInt('taskCompletedRange', v.index));
     ref.listen(_showExtendedAttrProvider,
         (_, v) => prefs?.setBool('task_showExtendedAttr', v));
 
@@ -332,14 +344,14 @@ class TaskPage extends ConsumerWidget {
       }
       final calendarNames = ref.read(_calendarNameMapProvider);
       final calendarColors = ref.read(_calendarColorMapProvider);
-      final completedRangeNow = ref.read(_completedRangeProvider);
-      final viewModeNow = ref.read(_taskViewModeProvider);
-      final currentViewDaysNow = ref.read(_currentViewDaysProvider);
+      final completedRangeNow = ref.read(completedRangeProvider);
+      final viewModeNow = ref.read(taskViewModeProvider);
+      final currentViewDaysNow = ref.read(currentViewDaysProvider);
       final sortModeNow = ref.read(_currentSortModeProvider);
       final selectedTagNow = ref.read(_selectedTagProvider);
       final orphanModeNow = ref.read(orphanDisplayModeProvider);
 
-      final visibleTasks = _applyViewFilters(tasks,
+      final visibleTasks = filterByViewMode(tasks,
           completedRange: completedRangeNow,
           viewMode: viewModeNow,
           currentViewDays: currentViewDaysNow);
@@ -358,7 +370,7 @@ class TaskPage extends ConsumerWidget {
           : pdfTasks;
       final displayTasks = isTagFiltered &&
               orphanModeNow == OrphanDisplayMode.tree
-          ? _withAncestors(matchedTasks, allTasks: visibleTasks)
+          ? withAncestors(matchedTasks, allTasks: visibleTasks)
           : matchedTasks;
       final sortedTasks = _applySort(displayTasks, sortMode: sortModeNow);
       final defaultCalendarUrlNow =
@@ -474,7 +486,7 @@ class TaskPage extends ConsumerWidget {
             _ViewModeSwitch(
               current: viewMode,
               onSelected: (m) =>
-                  ref.read(_taskViewModeProvider.notifier).state = m,
+                  ref.read(taskViewModeProvider.notifier).state = m,
             ),
           ],
         ),
@@ -483,6 +495,7 @@ class TaskPage extends ConsumerWidget {
           _CalendarFilterMenu(
             syncedCalendars: ref.watch(_syncedCalendarListProvider),
             selected: selectedCalendar,
+            visibleCounts: ref.watch(_calendarVisibleCountProvider),
             onSelected: (url) =>
                 ref.read(_selectedCalendarProvider.notifier).state = url,
           ),
@@ -598,8 +611,8 @@ class TaskPage extends ConsumerWidget {
     required AsyncValue<List<Task>> tasksAsync,
     required Map<String, String> calendarNames,
     required Map<String, Color> calendarColors,
-    required _CompletedRange completedRange,
-    required _TaskViewMode viewMode,
+    required CompletedRange completedRange,
+    required TaskViewMode viewMode,
     required int currentViewDays,
     required SortMode sortMode,
     required String? selectedTag,
@@ -616,7 +629,7 @@ class TaskPage extends ConsumerWidget {
         message: e.toString(),
       ),
       data: (tasks) {
-        var visibleTasks = _applyViewFilters(tasks,
+        var visibleTasks = filterByViewMode(tasks,
             completedRange: completedRange, viewMode: viewMode, currentViewDays: currentViewDays);
         if (selectedCalendar != null) {
           visibleTasks = visibleTasks
@@ -632,7 +645,7 @@ class TaskPage extends ConsumerWidget {
             : visibleTasks;
         final displayTasks = isTagFiltered &&
                 orphanMode == OrphanDisplayMode.tree
-            ? _withAncestors(matchedTasks, allTasks: visibleTasks)
+            ? withAncestors(matchedTasks, allTasks: visibleTasks)
             : matchedTasks;
         final sortedTasks = _applySort(displayTasks, sortMode: sortMode);
         final groups = _groupByCalendar(sortedTasks, calendarNames,
@@ -656,109 +669,6 @@ class TaskPage extends ConsumerWidget {
     );
 
     return listWidget;
-  }
-
-  /// 过滤：移除已删除任务，根据时间范围决定是否显示已完成任务。
-  List<Task> _applyFilters(List<Task> tasks,
-      {required _CompletedRange completedRange}) {
-    final now = DateTime.now().toUtc();
-    DateTime? cutoff;
-    switch (completedRange) {
-      case _CompletedRange.off:
-        break;
-      case _CompletedRange.day1:
-        cutoff = now.subtract(const Duration(days: 1));
-      case _CompletedRange.day3:
-        cutoff = now.subtract(const Duration(days: 3));
-      case _CompletedRange.day7:
-        cutoff = now.subtract(const Duration(days: 7));
-      case _CompletedRange.month1:
-        cutoff = now.subtract(const Duration(days: 30));
-      case _CompletedRange.year1:
-        cutoff = now.subtract(const Duration(days: 365));
-      case _CompletedRange.currentYear:
-        cutoff = DateTime(now.year, 1, 1).toUtc();
-    }
-    return tasks.where((t) {
-      if (t.deleted) return false;
-      if (t.isCompleted) {
-        if (completedRange == _CompletedRange.off) return false;
-        if (cutoff != null) {
-          final completed = t.completed ?? t.lastModified ?? t.created;
-          if (completed == null || completed.isBefore(cutoff)) return false;
-        }
-      }
-      return true;
-    }).toList();
-  }
-
-  /// 按视图模式过滤任务。
-  /// - [current]：截止 [currentViewDays] 天内、或设了优先级、或进行中的任务
-  /// - [all]：所有任务（根据开关决定是否显示已完成）
-  /// - [completed]：包含所有任务（含已完成，仅排除已删除）
-  List<Task> _applyViewFilters(
-    List<Task> tasks, {
-    required _CompletedRange completedRange,
-    required _TaskViewMode viewMode,
-    required int currentViewDays,
-  }) {
-    switch (viewMode) {
-      case _TaskViewMode.important:
-        final base = _applyFilters(tasks, completedRange: completedRange);
-        final now = DateTime.now().toUtc();
-        final matched = base.where((t) {
-          // 设置了优先级
-          if (t.priority != TaskPriority.none) return true;
-          // 截止日期在当前及之前
-          if (t.due != null && !t.due!.isAfter(now)) return true;
-          return false;
-        }).toList();
-        return _withAncestors(matched, allTasks: base);
-      case _TaskViewMode.current:
-        final base = _applyFilters(tasks, completedRange: completedRange);
-        final now = DateTime.now().toUtc();
-        final dueCutoff = now.add(Duration(days: currentViewDays));
-        final matched = base.where((t) {
-          // 截止日期在配置天数内
-          if (t.due != null && t.due!.isBefore(dueCutoff)) return true;
-          // 设置了优先级
-          if (t.priority != TaskPriority.none) return true;
-          // 状态为进行中
-          if (t.status == TaskStatus.inProcess) return true;
-          return false;
-        }).toList();
-        // 符合条件任务的父任务链一并显示
-        return _withAncestors(matched, allTasks: base);
-      case _TaskViewMode.all:
-        return _applyFilters(tasks, completedRange: completedRange);
-      case _TaskViewMode.completed:
-        return tasks.where((t) => !t.deleted).toList();
-    }
-  }
-
-  /// 树状模式：向上追溯父任务链，把匹配任务及其所有祖先都包含进来。
-  /// 保持原有任务顺序，去重。
-  List<Task> _withAncestors(List<Task> matched, {required List<Task> allTasks}) {
-    if (matched.isEmpty) return matched;
-    final uidToTask = <String, Task>{
-      for (final t in allTasks) t.uid: t,
-    };
-    final result = <Task>[];
-    final added = <String>{};
-    void addWithAncestors(Task t) {
-      if (added.contains(t.uid)) return;
-      added.add(t.uid);
-      final p = t.parentUid;
-      if (p != null && p.isNotEmpty && uidToTask.containsKey(p)) {
-        addWithAncestors(uidToTask[p]!);
-      }
-      result.add(t);
-    }
-
-    for (final t in matched) {
-      addWithAncestors(t);
-    }
-    return result;
   }
 
   /// 按指定排序方式对任务排序（不修改父子关系）。
@@ -860,14 +770,14 @@ class _ViewModeSwitch extends StatelessWidget {
     required this.onSelected,
   });
 
-  final _TaskViewMode current;
-  final ValueChanged<_TaskViewMode> onSelected;
+  final TaskViewMode current;
+  final ValueChanged<TaskViewMode> onSelected;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return PopupMenuButton<_TaskViewMode>(
+    return PopupMenuButton<TaskViewMode>(
       tooltip: '视图模式',
       onSelected: onSelected,
       initialValue: current,
@@ -892,8 +802,8 @@ class _ViewModeSwitch extends StatelessWidget {
           ],
         ),
       ),
-      itemBuilder: (context) => _TaskViewMode.values.map((m) {
-        return PopupMenuItem<_TaskViewMode>(
+      itemBuilder: (context) => TaskViewMode.values.map((m) {
+        return PopupMenuItem<TaskViewMode>(
           value: m,
           child: Row(
             children: [
@@ -912,18 +822,18 @@ class _ViewModeSwitch extends StatelessWidget {
     );
   }
 
-  static IconData _icon(_TaskViewMode m) => switch (m) {
-        _TaskViewMode.important => Icons.star_outlined,
-        _TaskViewMode.current => Icons.inbox_outlined,
-        _TaskViewMode.all => Icons.list_outlined,
-        _TaskViewMode.completed => Icons.task_alt,
+  static IconData _icon(TaskViewMode m) => switch (m) {
+        TaskViewMode.important => Icons.star_outlined,
+        TaskViewMode.current => Icons.inbox_outlined,
+        TaskViewMode.all => Icons.list_outlined,
+        TaskViewMode.completed => Icons.task_alt,
       };
 
-  static String _label(_TaskViewMode m) => switch (m) {
-        _TaskViewMode.important => '重要',
-        _TaskViewMode.current => '当前',
-        _TaskViewMode.all => '全部',
-        _TaskViewMode.completed => '完成',
+  static String _label(TaskViewMode m) => switch (m) {
+        TaskViewMode.important => '重要',
+        TaskViewMode.current => '当前',
+        TaskViewMode.all => '全部',
+        TaskViewMode.completed => '完成',
       };
 }
 
@@ -1022,30 +932,30 @@ void _showViewDaysPopup(
             ))
         .toList(),
   ).then((d) {
-    if (d != null) ref.read(_currentViewDaysProvider.notifier).state = d;
+    if (d != null) ref.read(currentViewDaysProvider.notifier).state = d;
   });
 }
 
 /// 弹出"显示完成的任务"时间范围子菜单
 void _showCompletedRangePopup(
-    BuildContext context, WidgetRef ref, _CompletedRange current) {
+    BuildContext context, WidgetRef ref, CompletedRange current) {
   final theme = Theme.of(context);
-  const options = _CompletedRange.values;
-  String label(_CompletedRange r) {
+  const options = CompletedRange.values;
+  String label(CompletedRange r) {
     switch (r) {
-      case _CompletedRange.off:
+      case CompletedRange.off:
         return '不显示';
-      case _CompletedRange.day1:
+      case CompletedRange.day1:
         return '1 天';
-      case _CompletedRange.day3:
+      case CompletedRange.day3:
         return '3 天';
-      case _CompletedRange.day7:
+      case CompletedRange.day7:
         return '7 天';
-      case _CompletedRange.month1:
+      case CompletedRange.month1:
         return '1 月';
-      case _CompletedRange.year1:
+      case CompletedRange.year1:
         return '1 年';
-      case _CompletedRange.currentYear:
+      case CompletedRange.currentYear:
         return '当年';
     }
   }
@@ -1062,7 +972,7 @@ void _showCompletedRangePopup(
     Offset.zero & overlay.size,
   );
 
-  showMenu<_CompletedRange>(
+  showMenu<CompletedRange>(
     context: context,
     position: position,
     initialValue: current,
@@ -1083,20 +993,26 @@ void _showCompletedRangePopup(
             ))
         .toList(),
   ).then((r) {
-    if (r != null) ref.read(_completedRangeProvider.notifier).state = r;
+    if (r != null) ref.read(completedRangeProvider.notifier).state = r;
   });
 }
 
 /// 按清单（日历）过滤下拉菜单，仅显示已启用同步的清单并带颜色圆点。
+///
+/// 每个清单名称后附带当前可见任务数量（小字号灰色），便于快速了解
+/// 各清单的任务分布。
 class _CalendarFilterMenu extends StatelessWidget {
   const _CalendarFilterMenu({
     required this.syncedCalendars,
     required this.selected,
+    required this.visibleCounts,
     required this.onSelected,
   });
 
   final List<({String url, String name, Color color})> syncedCalendars;
   final String? selected;
+  /// 清单 URL → 可见任务数量的映射。
+  final Map<String, int> visibleCounts;
   final ValueChanged<String?> onSelected;
 
   @override
@@ -1108,30 +1024,53 @@ class _CalendarFilterMenu extends StatelessWidget {
         ? null
         : list.where((c) => c.url == selected).firstOrNull;
     final selectedName = selectedCal?.name;
+    final totalCount = visibleCounts.values.fold(0, (a, b) => a + b);
+    final selectedCount = isAll ? null : visibleCounts[selectedCal?.url];
 
     final items = <PopupMenuEntry<String?>>[
-      const PopupMenuItem<String?>(
+      PopupMenuItem<String?>(
         value: '__all__',
-        child: Text('全部清单'),
+        child: Row(
+          children: [
+            const Text('全部清单'),
+            const SizedBox(width: 8),
+            Text(
+              '($totalCount)',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ],
+        ),
       ),
       if (list.isNotEmpty) const PopupMenuDivider(),
-      ...list.map((c) => PopupMenuItem<String?>(
-            value: c.url,
-            child: Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(
-                    color: c.color,
-                    shape: BoxShape.circle,
-                  ),
+      ...list.map((c) {
+        final count = visibleCounts[c.url] ?? 0;
+        return PopupMenuItem<String?>(
+          value: c.url,
+          child: Row(
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: c.color,
+                  shape: BoxShape.circle,
                 ),
-                const SizedBox(width: 8),
-                Text(c.name),
-              ],
-            ),
-          )),
+              ),
+              const SizedBox(width: 8),
+              Text(c.name),
+              const SizedBox(width: 8),
+              Text(
+                '($count)',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
     ];
 
     return PopupMenuButton<String?>(
@@ -1170,6 +1109,16 @@ class _CalendarFilterMenu extends StatelessWidget {
                     : theme.colorScheme.primary,
               ),
             ),
+            // 当前选中清单的可见任务计数（全部清单时不显示）
+            if (!isAll && selectedCount != null) ...[
+              const SizedBox(width: 4),
+              Text(
+                '$selectedCount',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1591,13 +1540,13 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   Future<void> _createTaskInCalendar(
       String calendarUrl, List<Task> rootSiblings) async {
     final sortOrder = _computeFirstSortOrder(rootSiblings);
-    final viewMode = ref.read(_taskViewModeProvider);
+    final viewMode = ref.read(taskViewModeProvider);
     final task = Task.create(
       calendarUrl: calendarUrl,
       summary: '',
     ).copyWith(
       status: TaskStatus.inProcess,
-      priority: viewMode == _TaskViewMode.important
+      priority: viewMode == TaskViewMode.important
           ? TaskPriority.medium
           : TaskPriority.none,
       sortOrder: sortOrder,
@@ -1617,14 +1566,14 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   /// - all/completed：无额外默认属性
   Future<void> _createSubtask(Task parent, List<Task> childSiblings) async {
     final sortOrder = _computeFirstSortOrder(childSiblings);
-    final viewMode = ref.read(_taskViewModeProvider);
+    final viewMode = ref.read(taskViewModeProvider);
     final task = Task.create(
       calendarUrl: parent.calendarUrl,
       summary: '',
       parentUid: parent.uid,
     ).copyWith(
       status: TaskStatus.inProcess,
-      priority: viewMode == _TaskViewMode.important
+      priority: viewMode == TaskViewMode.important
           ? TaskPriority.medium
           : TaskPriority.none,
       sortOrder: sortOrder,
@@ -1748,11 +1697,25 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      category,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: scheme.onSurface,
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(
+                            text: category,
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurface,
+                            ),
+                          ),
+                          // 清单标题后显示当前模式可见的任务数量
+                          TextSpan(
+                            text: ' (${tasks.length})',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: scheme.outline,
+                              fontWeight: FontWeight.w400,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -3164,7 +3127,7 @@ class _QuickAddBar extends ConsumerStatefulWidget {
 
   final String? defaultCalendarUrl;
   final List<({String url, String name, Color color})> syncedCalendars;
-  final _TaskViewMode viewMode;
+  final TaskViewMode viewMode;
 
   @override
   ConsumerState<_QuickAddBar> createState() => _QuickAddBarState();
@@ -3216,7 +3179,7 @@ class _QuickAddBarState extends ConsumerState<_QuickAddBar> {
       summary: title,
     ).copyWith(
       status: TaskStatus.inProcess,
-      priority: widget.viewMode == _TaskViewMode.important
+      priority: widget.viewMode == TaskViewMode.important
           ? TaskPriority.medium
           : TaskPriority.none,
       sortOrder: newSortOrder,

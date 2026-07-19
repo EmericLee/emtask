@@ -37,8 +37,6 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
 
   // 新建模式下的临时字段
   String? _newCalendarUrl;
-  // 所有任务已用过的标签集合（供标签编辑器检索）
-  List<String> _allTags = const [];
   // 一次性自动编辑标题信号
   bool _autoEditTitle = false;
 
@@ -83,15 +81,9 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
         (x) => x.localId == id,
         orElse: () => throw StateError('任务不存在'),
       );
-      // 汇总所有任务的标签，供标签编辑器检索
-      final tags = <String>{};
-      for (final x in all) {
-        tags.addAll(x.categories);
-      }
       if (!mounted) return;
       setState(() {
         _loaded = t;
-        _allTags = tags.toList()..sort();
         _loading = false;
       });
     } catch (e) {
@@ -129,13 +121,8 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
       );
       if (!mounted) return;
       if (t != current) {
-        final tags = <String>{};
-        for (final x in all) {
-          tags.addAll(x.categories);
-        }
         setState(() {
           _loaded = t;
-          _allTags = tags.toList()..sort();
         });
       }
     } catch (_) {
@@ -178,6 +165,10 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
   @override
   Widget build(BuildContext context) {
     final calendarsAsync = ref.watch(calendarListProvider);
+    // 标签候选列表：仅汇总当前任务所属清单下可见任务的标签
+    // （新建模式用默认清单 URL 兜底；加载中或无清单时为 null，汇总所有清单）
+    final tagCalendarUrl = _loaded?.calendarUrl ?? _newCalendarUrl;
+    final allTags = ref.watch(availableTagsForCalendarProvider(tagCalendarUrl));
     // 详情页整体向浅色偏移（surfaceBright），与任务列表背景形成层次区分
     final scheme = Theme.of(context).colorScheme;
     // 监听任务列表变化，外部修改后同步刷新（如任务条内联编辑标题）
@@ -213,11 +204,14 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
             ),
         ],
       ),
-      body: _buildBody(calendarsAsync),
+      body: _buildBody(calendarsAsync, allTags),
     );
   }
 
-  Widget _buildBody(AsyncValue<List<Calendar>> calendarsAsync) {
+  Widget _buildBody(
+    AsyncValue<List<Calendar>> calendarsAsync,
+    List<String> allTags,
+  ) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -246,7 +240,7 @@ class _TaskDetailPageState extends ConsumerState<TaskDetailPage> {
     return _DetailList(
       task: t,
       calendarsAsync: calendarsAsync,
-      allTags: _allTags,
+      allTags: allTags,
       onUpdate: _update,
       autoEditTitle: _autoEditTitle,
     );
@@ -271,7 +265,6 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   Task? _loaded;
   bool _loading = true;
   String? _loadError;
-  List<String> _allTags = const [];
   bool _autoEditTitle = false;
 
   @override
@@ -305,14 +298,9 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
         (x) => x.localId == widget.taskId,
         orElse: () => throw StateError('任务不存在'),
       );
-      final tags = <String>{};
-      for (final x in all) {
-        tags.addAll(x.categories);
-      }
       if (!mounted) return;
       setState(() {
         _loaded = t;
-        _allTags = tags.toList()..sort();
         _loading = false;
       });
     } catch (e) {
@@ -350,13 +338,8 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
       );
       if (!mounted) return;
       if (t != current) {
-        final tags = <String>{};
-        for (final x in all) {
-          tags.addAll(x.categories);
-        }
         setState(() {
           _loaded = t;
-          _allTags = tags.toList()..sort();
         });
       }
     } catch (_) {
@@ -393,6 +376,10 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
   @override
   Widget build(BuildContext context) {
     final calendarsAsync = ref.watch(calendarListProvider);
+    // 标签候选列表：仅汇总当前任务所属清单下可见任务的标签
+    final allTags = ref.watch(
+      availableTagsForCalendarProvider(_loaded?.calendarUrl),
+    );
     // 详情页整体向浅色偏移（surfaceBright），与左侧任务列表背景形成层次区分
     final scheme = Theme.of(context).colorScheme;
     // 监听任务列表变化，外部修改后同步刷新（如任务条内联编辑标题）
@@ -442,7 +429,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
           ),
         ],
       ),
-      body: _buildBody(calendarsAsync),
+      body: _buildBody(calendarsAsync, allTags),
     );
   }
 
@@ -457,7 +444,10 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     );
   }
 
-  Widget _buildBody(AsyncValue<List<Calendar>> calendarsAsync) {
+  Widget _buildBody(
+    AsyncValue<List<Calendar>> calendarsAsync,
+    List<String> allTags,
+  ) {
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -479,7 +469,7 @@ class _TaskDetailPanelState extends ConsumerState<TaskDetailPanel> {
     return _DetailList(
       task: t,
       calendarsAsync: calendarsAsync,
-      allTags: _allTags,
+      allTags: allTags,
       onUpdate: _update,
       autoEditTitle: _autoEditTitle,
     );
