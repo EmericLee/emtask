@@ -24,7 +24,8 @@ android {
         applicationId = "com.emtask.em_task"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        // minSdk = 21 (Flutter 默认) → 提升至 24 以支持 FOREGROUND_SERVICE_DATA_SYNC 等权限
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

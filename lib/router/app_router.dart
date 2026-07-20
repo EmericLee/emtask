@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../core/utils/platform_info.dart';
 import '../features/calendars/calendars_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/sync/sync_page.dart';
@@ -111,7 +112,45 @@ class _AppScaffoldState extends State<_AppScaffold>
   @override
   Widget build(BuildContext context) {
     final index = _selectedIndex(widget.location);
+    final isMobile = PlatformInfo.isMobile;
 
+    if (isMobile) {
+      // 手机端：底端导航栏
+      return Scaffold(
+        body: SlideTransition(
+          position: _slide,
+          child: widget.child,
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: index,
+          onDestinationSelected: (i) => context.go(_pathForIndex(i)),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.checklist_outlined),
+              selectedIcon: Icon(Icons.checklist),
+              label: '任务',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.calendar_month_outlined),
+              selectedIcon: Icon(Icons.calendar_month),
+              label: '日历',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.sync_outlined),
+              selectedIcon: Icon(Icons.sync),
+              label: '同步',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.settings_outlined),
+              selectedIcon: Icon(Icons.settings),
+              label: '设置',
+            ),
+          ],
+        ),
+      );
+    }
+
+    // 桌面端：侧边导航栏
     return Scaffold(
       body: Row(
         children: [
