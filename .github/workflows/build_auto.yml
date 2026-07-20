@@ -122,11 +122,9 @@ jobs:
           Categories=Office;Utility;
           EOF
 
-          # 如果存在图标则复制，否则跳过（linuxdeploy 会使用默认图标）
-          if [ -f assets/icon.png ]; then
-            cp assets/icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
-          elif [ -f assets/icon512.png ]; then
-            cp assets/icon512.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          # 复制应用图标到 AppImage（统一源: assets/icon/app_icon.png）
+          if [ -f assets/icon/app_icon.png ]; then
+            cp assets/icon/app_icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
           fi
 
           export ARCH=arm64
@@ -219,10 +217,9 @@ jobs:
           Categories=Office;Utility;
           EOF
 
-          if [ -f assets/icon.png ]; then
-            cp assets/icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
-          elif [ -f assets/icon512.png ]; then
-            cp assets/icon512.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          # 复制应用图标到 AppImage（统一源: assets/icon/app_icon.png）
+          if [ -f assets/icon/app_icon.png ]; then
+            cp assets/icon/app_icon.png $APP_DIR/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
           fi
 
           wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage

@@ -1,7 +1,7 @@
 name: em_task
 description: "EM Task - 跨平台任务管理器，支持 CalDAV / Nextcloud Tasks 同步。"
 publish_to: 'none'
-version: 0.0.22+22
+version: 0.0.23+23
 
 environment:
   # sdk: ^3.11.0
@@ -65,6 +65,24 @@ dev_dependencies:
   freezed: ^2.5.7
   json_serializable: ^6.8.0
   drift_dev: ^2.20.0
+
+  # 应用图标生成（从 assets/icon/ 统一生成各平台图标）
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android:
+    generate: true
+  ios:
+    generate: false
+  macos:
+    generate: true
+  windows:
+    generate: true
+  web:
+    generate: false
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#4A90D9"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
 
 flutter:
   uses-material-design: true

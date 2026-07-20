@@ -11,6 +11,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/utils/platform_info.dart';
 import '../../data/providers.dart';
 import '../../domain/entities/task.dart';
 import '../../domain/entities/task_status.dart';
@@ -471,22 +472,26 @@ class TaskPage extends ConsumerWidget {
     // 任务页面主体：使用主题默认配色，不强制白底。
     // 宽屏下由 _WideScreenLayout 包裹，详情面板从右侧整体滑入时
     // 连同 AppBar、快速输入栏一起收缩。
+    final isMobile = PlatformInfo.isMobile;
     final taskScaffold = Scaffold(
       appBar: AppBar(
         scrolledUnderElevation: 0,
         title: Row(
           children: [
-            const Icon(
-              Icons.checklist_outlined,
-              size: 32,
-            ),
-            const SizedBox(width: 10),
+            if (!isMobile) ...[
+              const Icon(
+                Icons.checklist_outlined,
+                size: 32,
+              ),
+              const SizedBox(width: 10),
+            ],
             const Text('任务'),
             const SizedBox(width: 16),
             _ViewModeSwitch(
               current: viewMode,
               onSelected: (m) =>
                   ref.read(taskViewModeProvider.notifier).state = m,
+              iconOnly: isMobile,
             ),
           ],
         ),
@@ -498,22 +503,25 @@ class TaskPage extends ConsumerWidget {
             visibleCounts: ref.watch(_calendarVisibleCountProvider),
             onSelected: (url) =>
                 ref.read(_selectedCalendarProvider.notifier).state = url,
+            iconOnly: isMobile,
           ),
           // 排序方式切换
           _SortModeMenu(
             current: sortMode,
             onSelected: (m) => ref.read(_currentSortModeProvider.notifier).state = m,
+            iconOnly: isMobile,
           ),
           // 标签快速过滤
           _TagFilterMenu(
             tags: availableTags,
             selectedTag: selectedTag,
             onSelected: (tag) => ref.read(_selectedTagProvider.notifier).state = tag,
+            iconOnly: isMobile,
           ),
           // 导出 PDF
           IconButton(
             tooltip: '导出 PDF 文件',
-            icon: const Icon(Icons.download_outlined),
+            icon: const Icon(Icons.picture_as_pdf_outlined),
             onPressed: onExportPdf,
           ),
           // 同步按钮：未同步时高亮+角标
@@ -768,10 +776,13 @@ class _ViewModeSwitch extends StatelessWidget {
   const _ViewModeSwitch({
     required this.current,
     required this.onSelected,
+    this.iconOnly = false,
   });
 
   final TaskViewMode current;
   final ValueChanged<TaskViewMode> onSelected;
+  /// 手机端：仅显示图标，不显示文字标签。
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -781,24 +792,26 @@ class _ViewModeSwitch extends StatelessWidget {
       tooltip: '视图模式',
       onSelected: onSelected,
       initialValue: current,
-      padding: EdgeInsets.zero,
+      padding: iconOnly ? EdgeInsets.zero : const EdgeInsets.all(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: EdgeInsets.symmetric(horizontal: iconOnly ? 4 : 10),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               _icon(current),
-              size: 18,
+              size: iconOnly ? 22 : 18,
               color: scheme.primary,
             ),
-            const SizedBox(width: 4),
-            Text(
-              _label(current),
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: scheme.primary,
+            if (!iconOnly) ...[
+              const SizedBox(width: 4),
+              Text(
+                _label(current),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: scheme.primary,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -842,16 +855,26 @@ class _SortModeMenu extends StatelessWidget {
   const _SortModeMenu({
     required this.current,
     required this.onSelected,
+    this.iconOnly = false,
   });
 
   final SortMode current;
   final ValueChanged<SortMode> onSelected;
+  /// 手机端：仅显示图标，不显示文字标签。
+  final bool iconOnly;
 
   String _label(SortMode mode) => switch (mode) {
         SortMode.manual => '手动',
         SortMode.alphabetical => '字母',
         SortMode.dueDate => '截止时间',
         SortMode.edited => '编辑时间',
+      };
+
+  IconData _icon(SortMode mode) => switch (mode) {
+        SortMode.manual => Icons.drag_handle,
+        SortMode.alphabetical => Icons.sort_by_alpha,
+        SortMode.dueDate => Icons.schedule,
+        SortMode.edited => Icons.history,
       };
 
   @override
@@ -864,22 +887,34 @@ class _SortModeMenu extends StatelessWidget {
       itemBuilder: (context) => SortMode.values
           .map((m) => PopupMenuItem(
                 value: m,
-                child: Text(_label(m)),
+                child: Row(
+                  children: [
+                    Icon(_icon(m), size: 18, color: theme.colorScheme.outline),
+                    const SizedBox(width: 8),
+                    Text(_label(m)),
+                  ],
+                ),
               ))
           .toList(),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: EdgeInsets.symmetric(horizontal: iconOnly ? 4 : 12),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.sort, size: 20, color: theme.colorScheme.outline),
-            const SizedBox(width: 4),
-            Text(
-              _label(current),
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: theme.colorScheme.outline,
-              ),
+            Icon(
+              _icon(current),
+              size: iconOnly ? 22 : 20,
+              color: theme.colorScheme.outline,
             ),
+            if (!iconOnly) ...[
+              const SizedBox(width: 4),
+              Text(
+                _label(current),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1007,6 +1042,7 @@ class _CalendarFilterMenu extends StatelessWidget {
     required this.selected,
     required this.visibleCounts,
     required this.onSelected,
+    this.iconOnly = false,
   });
 
   final List<({String url, String name, Color color})> syncedCalendars;
@@ -1014,6 +1050,8 @@ class _CalendarFilterMenu extends StatelessWidget {
   /// 清单 URL → 可见任务数量的映射。
   final Map<String, int> visibleCounts;
   final ValueChanged<String?> onSelected;
+  /// 手机端：仅显示图标，不显示文字标签。
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -1079,7 +1117,7 @@ class _CalendarFilterMenu extends StatelessWidget {
       onSelected: (v) => onSelected(v == '__all__' ? null : v),
       itemBuilder: (context) => items,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: EdgeInsets.symmetric(horizontal: iconOnly ? 4 : 12),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1094,30 +1132,34 @@ class _CalendarFilterMenu extends StatelessWidget {
                 ),
               ),
             Icon(
-              Icons.filter_list_outlined,
-              size: 20,
+              iconOnly
+                  ? (isAll ? Icons.folder_outlined : Icons.folder)
+                  : Icons.filter_list_outlined,
+              size: iconOnly ? 22 : 20,
               color: isAll
                   ? theme.colorScheme.outline
                   : theme.colorScheme.primary,
             ),
-            const SizedBox(width: 4),
-            Text(
-              isAll ? '清单' : selectedName!,
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: isAll
-                    ? theme.colorScheme.outline
-                    : theme.colorScheme.primary,
-              ),
-            ),
-            // 当前选中清单的可见任务计数（全部清单时不显示）
-            if (!isAll && selectedCount != null) ...[
+            if (!iconOnly) ...[
               const SizedBox(width: 4),
               Text(
-                '$selectedCount',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.outline,
+                isAll ? '清单' : selectedName!,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: isAll
+                      ? theme.colorScheme.outline
+                      : theme.colorScheme.primary,
                 ),
               ),
+              // 当前选中清单的可见任务计数（全部清单时不显示）
+              if (!isAll && selectedCount != null) ...[
+                const SizedBox(width: 4),
+                Text(
+                  '$selectedCount',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              ],
             ],
           ],
         ),
@@ -1132,11 +1174,14 @@ class _TagFilterMenu extends StatelessWidget {
     required this.tags,
     required this.selectedTag,
     required this.onSelected,
+    this.iconOnly = false,
   });
 
   final Set<String> tags;
   final String? selectedTag;
   final ValueChanged<String?> onSelected;
+  /// 手机端：仅显示图标，不显示文字标签。
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -1160,22 +1205,24 @@ class _TagFilterMenu extends StatelessWidget {
       onSelected: onSelected,
       itemBuilder: (context) => items,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: EdgeInsets.symmetric(horizontal: iconOnly ? 4 : 12),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.label_outline,
-              size: 20,
+              isAll ? Icons.label_outline : Icons.label,
+              size: iconOnly ? 22 : 20,
               color: isAll ? theme.colorScheme.outline : theme.colorScheme.primary,
             ),
-            const SizedBox(width: 4),
-            Text(
-              isAll ? '标签' : selectedTag!,
-              style: theme.textTheme.labelMedium?.copyWith(
-                color: isAll ? theme.colorScheme.outline : theme.colorScheme.primary,
+            if (!iconOnly) ...[
+              const SizedBox(width: 4),
+              Text(
+                isAll ? '标签' : selectedTag!,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: isAll ? theme.colorScheme.outline : theme.colorScheme.primary,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
