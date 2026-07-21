@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -55,6 +56,7 @@ enum _OptionMenu {
   showExtendedAttr,
   currentViewDays,
   completedRange,
+  exportPdf,
 }
 
 /// 任务页配置是否已从 SharedPreferences 加载（防止重复初始化）。
@@ -518,19 +520,20 @@ class TaskPage extends ConsumerWidget {
             onSelected: (tag) => ref.read(_selectedTagProvider.notifier).state = tag,
             iconOnly: isMobile,
           ),
-          // 导出 PDF
-          IconButton(
-            tooltip: '导出 PDF 文件',
-            icon: const Icon(Icons.picture_as_pdf_outlined),
-            onPressed: onExportPdf,
-          ),
+          // 导出 PDF（窄屏时移入三点菜单）
+          if (!isMobile)
+            IconButton(
+              tooltip: '导出 PDF 文件',
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              onPressed: onExportPdf,
+            ),
           // 同步按钮：未同步时高亮+角标
           _SyncButton(
             running: syncState.running,
             pendingCount: pendingCount,
             onPressed: doSync,
           ),
-          // 更多选项：显示扩展属性、当前视图时间范围、显示完成的任务
+          // 更多选项：显示扩展属性、当前视图时间范围、显示完成的任务、导出PDF
           Builder(builder: (buttonContext) {
             return PopupMenuButton<_OptionMenu>(
               tooltip: '更多选项',
@@ -544,6 +547,8 @@ class TaskPage extends ConsumerWidget {
                     _showViewDaysPopup(buttonContext, ref, currentViewDays);
                   case _OptionMenu.completedRange:
                     _showCompletedRangePopup(buttonContext, ref, completedRange);
+                  case _OptionMenu.exportPdf:
+                    onExportPdf();
                 }
               },
               itemBuilder: (ctx) => [
@@ -561,6 +566,13 @@ class TaskPage extends ConsumerWidget {
                   value: _OptionMenu.completedRange,
                   child: Text('显示完成的任务…'),
                 ),
+                if (isMobile) ...[
+                  const PopupMenuDivider(),
+                  const PopupMenuItem<_OptionMenu>(
+                    value: _OptionMenu.exportPdf,
+                    child: Text('导出 PDF 文件'),
+                  ),
+                ],
               ],
             );
           }),
@@ -1370,6 +1382,22 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
   // ================ 自定义拖拽状态 ================
   /// 是否正在拖拽中。
   bool _isDragging = false;
+  /// 是否正在长按等待触发拖拽。
+  bool _isLongPressing = false;
+  /// 长按计时器：按住一定时间后才触发拖拽。
+  Timer? _longPressTimer;
+  /// 长按触发延迟（毫秒）。
+  static const int _longPressDelay = 500;
+  /// 长按期间允许的最大移动距离（超过则取消长按）。
+  static const double _longPressMoveThreshold = 10.0;
+  /// 长按起始位置（用于检测移动距离）。
+  Offset? _longPressStartPos;
+  /// 长按起始时的指针 ID。
+  int? _longPressPointerId;
+  /// 长按起始时的任务信息（延迟启动拖拽时使用）。
+  String? _longPressCategory;
+  List<_FlatNode>? _longPressFlat;
+  _FlatNode? _longPressNode;
   /// 正在拖拽的日历分组 key（限制单组内拖动）。
   String? _dragCalendarKey;
   /// 拖拽起始时的扁平列表快照。
@@ -1675,6 +1703,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     }
     _pendingDeletes.clear();
     _optimisticFallbackTimer?.cancel();
+    _longPressTimer?.cancel();
     _stopAutoScroll();
     _removeDragOverlay();
     _scrollCtrl.dispose();
@@ -1714,7 +1743,9 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
         // 允许触摸拖拽滚动：任务条的 GestureDetector(supportedDevices) 限制后
         // 手势竞技场能正确区分——任务条 pan 手势在 hit test 中更深，优先获胜。
         // 鼠标滚轮仍由外层 Listener.onPointerSignal 加速处理。
-        physics: const ClampingScrollPhysics(),
+        physics: _isDragging
+            ? const NeverScrollableScrollPhysics()
+            : const ClampingScrollPhysics(),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0).copyWith(bottom: 24),
         itemCount: entries.length,
         itemBuilder: (context, index) {
@@ -1727,71 +1758,74 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
         final tree = _WorkTaskTree(tasks, allTasks: widget.allTasks);
         final isCollapsed = _collapsedCalendars.contains(category);
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: calendarColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text.rich(
-                      TextSpan(
-                        children: [
-                          TextSpan(
-                            text: category,
-                            style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurface,
-                            ),
-                          ),
-                          // 清单标题后显示当前模式可见的任务数量
-                          TextSpan(
-                            text: ' (${tasks.length})',
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: scheme.outline,
-                              fontWeight: FontWeight.w400,
-                            ),
-                          ),
-                        ],
+        return RepaintBoundary(
+          key: ValueKey('group-$category'),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 24, 16, 8),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: calendarColor,
+                        shape: BoxShape.circle,
                       ),
                     ),
-                  ),
-                  // 右端按钮组：增加任务 + 展开/折叠（辅助样式，不醒目）
-                  if (firstUrl != null) ...[
-                    _AddButton(
-                      tooltip: '在此清单创建任务',
-                      onPressed: () =>
-                          _createTaskInCalendar(firstUrl, tree.roots),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(
+                              text: category,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: scheme.onSurface,
+                              ),
+                            ),
+                            // 清单标题后显示当前模式可见的任务数量
+                            TextSpan(
+                              text: ' (${tasks.length})',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                color: scheme.outline,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
-                    const SizedBox(width: 4),
+                    // 右端按钮组：增加任务 + 展开/折叠（辅助样式，不醒目）
+                    if (firstUrl != null) ...[
+                      _AddButton(
+                        tooltip: '在此清单创建任务',
+                        onPressed: () =>
+                            _createTaskInCalendar(firstUrl, tree.roots),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    _CollapseButton(
+                      collapsed: isCollapsed,
+                      onPressed: () {
+                        setState(() {
+                          if (isCollapsed) {
+                            _collapsedCalendars.remove(category);
+                          } else {
+                            _collapsedCalendars.add(category);
+                          }
+                        });
+                      },
+                    ),
                   ],
-                  _CollapseButton(
-                    collapsed: isCollapsed,
-                    onPressed: () {
-                      setState(() {
-                        if (isCollapsed) {
-                          _collapsedCalendars.remove(category);
-                        } else {
-                          _collapsedCalendars.add(category);
-                        }
-                      });
-                    },
-                  ),
-                ],
+                ),
               ),
-            ),
-            if (!isCollapsed) _buildGroupBody(category, tree, canReorder),
-          ],
+              if (!isCollapsed) _buildGroupBody(category, tree, canReorder),
+            ],
+          ),
         );
       },
       ),
@@ -1993,6 +2027,9 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     final selectedTaskId = ref.watch(selectedTaskIdProvider);
     final isSelected = selectedTaskId == task.localId;
     final pendingDelete = isPendingDelete(task.uid);
+    // 在此处统一读取 showExtendedAttr，避免每个 tile 各自 watch provider
+    // 导致切换扩展属性时全部 tile 重建引发闪烁。
+    final showExtendedAttr = ref.watch(_showExtendedAttrProvider);
 
     final tile = _WorkTaskTile(
       task: task,
@@ -2005,6 +2042,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
       selected: isSelected,
       pendingDelete: pendingDelete,
       editingTitle: _editingTitleTaskId == task.localId,
+      showExtendedAttr: showExtendedAttr,
       onToggle: hasChildren
           ? () => setState(() {
                 if (isExpanded) {
@@ -2021,7 +2059,7 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     );
 
     if (!canReorder) {
-      return KeyedSubtree(
+      return RepaintBoundary(
         key: ValueKey('node-${task.uid}'),
         child: tile,
       );
@@ -2030,22 +2068,17 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     final key =
         _tileKeys.putIfAbsent(task.uid, () => GlobalKey(debugLabel: task.uid));
     // GlobalKey 置于最外层：指示器重排时 Flutter 按 key 匹配并移动该子树，
-    // 保留 GestureDetector 状态，使正在进行的拖拽手势不中断。
+    // 保留 Listener 状态，使正在进行的拖拽手势不中断。
     // 拖拽期间移动块塌缩为零尺寸（SizedBox.shrink）：剩余条目上移填空隙，
     // 插入指示器能紧跟指针；被拖任务由 Overlay 浮动预览跟随指针呈现。
-    return KeyedSubtree(
+    return RepaintBoundary(
       key: key,
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.translucent,
-        // 仅接受鼠标输入，避免触控板滚动/平移误触发拖拽
-        supportedDevices: const {
-          PointerDeviceKind.mouse,
-          PointerDeviceKind.touch,
-        },
-        onPanStart: (d) => _onDragStart(category, flat, node, d),
-        onPanUpdate: (d) => _onDragUpdate(d),
-        onPanEnd: (d) => _onDragEnd(),
-        onPanCancel: () => _onDragCancel(),
+        onPointerDown: (e) => _onPointerDown(category, flat, node, e),
+        onPointerMove: (e) => _onPointerMove(e),
+        onPointerUp: (e) => _onPointerUp(e),
+        onPointerCancel: (e) => _onPointerCancel(e),
         child: isDragGhost ? const SizedBox.shrink() : tile,
       ),
     );
@@ -2053,13 +2086,79 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
 
   // ============== 自定义拖拽流程 ==============
 
-  /// 拖拽开始：记录移动块、起手偏移，初始化落点为原位置，显示浮动预览。
-  void _onDragStart(
+  /// 指针按下：触摸设备启动长按计时器，鼠标设备立即触发拖拽。
+  void _onPointerDown(
     String category,
     List<_FlatNode> flat,
     _FlatNode node,
-    DragStartDetails details,
+    PointerDownEvent event,
   ) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _startDrag(event.position);
+      return;
+    }
+    _isLongPressing = true;
+    _longPressStartPos = event.position;
+    _longPressPointerId = event.pointer;
+    _longPressCategory = category;
+    _longPressFlat = flat;
+    _longPressNode = node;
+    _longPressTimer = Timer(const Duration(milliseconds: _longPressDelay), () {
+      _startDrag(event.position);
+    });
+  }
+
+  /// 指针移动：长按期间检测移动距离，拖拽期间更新位置。
+  void _onPointerMove(PointerMoveEvent event) {
+    if (_isLongPressing && _longPressPointerId == event.pointer) {
+      final startPos = _longPressStartPos;
+      if (startPos != null) {
+        final distance = (event.position - startPos).distance;
+        if (distance > _longPressMoveThreshold) {
+          _cancelLongPress();
+        }
+      }
+      return;
+    }
+    if (!_isDragging) return;
+    _dragPointerPos = event.position;
+    _computeDrop();
+    _dragOverlay?.markNeedsBuild();
+    _updateAutoScroll(event.position);
+  }
+
+  /// 指针抬起：结束长按或执行重排。
+  void _onPointerUp(PointerUpEvent event) {
+    _cancelLongPress();
+    if (!_isDragging) return;
+    _performReorder();
+    _clearDrag();
+  }
+
+  /// 指针取消：清理状态。
+  void _onPointerCancel(PointerCancelEvent event) {
+    _cancelLongPress();
+    _clearDrag();
+  }
+
+  /// 真正开始拖拽：记录移动块、起手偏移，初始化落点为原位置，显示浮动预览。
+  void _startDrag(Offset globalPosition) {
+    _isLongPressing = false;
+    _longPressTimer = null;
+    _longPressStartPos = null;
+    _longPressPointerId = null;
+
+    final category = _longPressCategory;
+    final flat = _longPressFlat;
+    final node = _longPressNode;
+    _longPressCategory = null;
+    _longPressFlat = null;
+    _longPressNode = null;
+
+    if (category == null || flat == null || node == null) return;
+
+    HapticFeedback.vibrate();
+
     _dragCalendarKey = category;
     _dragFlat = flat;
     final idx = flat.indexWhere((n) => n.task.uid == node.task.uid);
@@ -2082,9 +2181,17 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
 
     _dragBlock = block;
     _dragBlockUids = blockUids;
-    _dragBlockOffset = details.localPosition;
-    _dragStartGlobalX = details.globalPosition.dx;
-    _dragPointerPos = details.globalPosition;
+    final key = _tileKeys[node.task.uid];
+    final ctx = key?.currentContext;
+    if (ctx != null) {
+      final box = ctx.findRenderObject() as RenderBox?;
+      if (box != null) {
+        _dragBlockOffset = box.globalToLocal(globalPosition);
+      }
+    }
+    _dragBlockOffset ??= Offset.zero;
+    _dragStartGlobalX = globalPosition.dx;
+    _dragPointerPos = globalPosition;
     _dropIndex = remainingIdx;
     _dropDepth = movedDepth;
     _isDragging = true;
@@ -2093,25 +2200,16 @@ class _CurrentTaskListState extends ConsumerState<_CurrentTaskList> {
     setState(() {});
   }
 
-  /// 拖拽移动：更新指针位置，重算落点（索引 + 深度），并按需触发边缘自动滚动。
-  void _onDragUpdate(DragUpdateDetails details) {
-    if (!_isDragging) return;
-    _dragPointerPos = details.globalPosition;
-    _computeDrop();
-    _dragOverlay?.markNeedsBuild();
-    _updateAutoScroll(details.globalPosition);
-  }
-
-  /// 拖拽结束：执行重排并清理拖拽状态。
-  void _onDragEnd() {
-    if (!_isDragging) return;
-    _performReorder();
-    _clearDrag();
-  }
-
-  /// 拖拽取消：仅清理状态，不落库。
-  void _onDragCancel() {
-    _clearDrag();
+  /// 取消长按计时器和长按状态。
+  void _cancelLongPress() {
+    _longPressTimer?.cancel();
+    _longPressTimer = null;
+    _isLongPressing = false;
+    _longPressStartPos = null;
+    _longPressPointerId = null;
+    _longPressCategory = null;
+    _longPressFlat = null;
+    _longPressNode = null;
   }
 
   /// 清理拖拽即时状态（保留乐观覆盖直到 provider 追上）。
@@ -2654,6 +2752,7 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
     this.selected = false,
     this.pendingDelete = false,
     this.editingTitle = false,
+    this.showExtendedAttr = false,
     this.onAddSubtask,
     this.onDelete,
     this.onUndoDelete,
@@ -2675,6 +2774,8 @@ class _WorkTaskTile extends ConsumerStatefulWidget {
   final bool pendingDelete;
   /// 是否正在内联编辑标题。
   final bool editingTitle;
+  /// 是否显示扩展属性行（由父级统一传入，避免每个 tile 各自 watch provider 引发闪烁）。
+  final bool showExtendedAttr;
   /// 点击"添加子任务"回调。
   final VoidCallback? onAddSubtask;
   /// 点击"删除"回调（启动撤销倒计时）。
@@ -2701,7 +2802,7 @@ class _WorkTaskTileState extends ConsumerState<_WorkTaskTile> {
     final fmtAttr = DateFormat('MM-dd HH:mm');
     final hasNote = widget.task.description.trim().isNotEmpty;
     final t = widget.task;
-    final showAttr = ref.watch(_showExtendedAttrProvider);
+    final showAttr = widget.showExtendedAttr;
     // 属性行信息：远端创建、远端修改、本地修改、同步状态（null 显示 "-"）
     final attrParts = <String>[
       '远端创建 ${t.created != null ? fmtAttr.format(t.created!.toLocal()) : '-'}',

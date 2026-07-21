@@ -103,7 +103,10 @@ static gboolean my_application_local_command_line(GApplication* application,
 static void my_application_startup(GApplication* application) {
   // MyApplication* self = MY_APPLICATION(object);
 
-  // Perform any actions required at application startup.
+  // Linux渲染优化：禁用Impeller，使用Skia后端
+  // UOS等国产Linux发行版的GPU驱动对Impeller支持不完善，
+  // 容易导致任务树闪烁和渲染异常，强制使用Skia可避免此问题。
+  setenv("FLUTTER_RENDERER", "skia", 1);
 
   G_APPLICATION_CLASS(my_application_parent_class)->startup(application);
 }

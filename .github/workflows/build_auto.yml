@@ -119,6 +119,9 @@ jobs:
           Name=${{ env.APP_NAME }}
           Exec=$BINARY_NAME
           Icon=${{ env.APP_ID }}
+          StartupWMClass=${{ env.APP_ID }}
+          Comment=Task management application with CalDAV sync
+          Terminal=false
           Categories=Office;Utility;
           EOF
 
@@ -214,6 +217,9 @@ jobs:
           Name=${{ env.APP_NAME }}
           Exec=$BINARY_NAME
           Icon=${{ env.APP_ID }}
+          StartupWMClass=${{ env.APP_ID }}
+          Comment=Task management application with CalDAV sync
+          Terminal=false
           Categories=Office;Utility;
           EOF
 
